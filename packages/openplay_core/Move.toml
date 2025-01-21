@@ -5,7 +5,7 @@ version = "0.0.1"
 published-at = "0x2"
 
 [dependencies]
-Sui = { local = "../../sui_from_source/crates/sui-framework/packages/sui-framework" }
+Sui = { local = "../../../sui_from_source/crates/sui-framework/packages/sui-framework" }
 
 [addresses]
 openplay_core = "0x2"
