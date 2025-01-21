@@ -1,0 +1,14 @@
+[package]
+name = "openplay_coin_flip"
+edition = "2024.beta" # edition = "legacy" to use legacy (pre-2024) Move
+version = "0.0.1"
+published-at = "0x1"
+
+[dependencies]
+Sui = { local = "../../sui_from_source/crates/sui-framework/packages/sui-framework" }
+openplay_core = { local = "../openplay_core" }
+
+
+[addresses]
+openplay_coin_flip = "0x1"
+
