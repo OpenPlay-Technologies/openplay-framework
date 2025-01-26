@@ -1,4 +1,4 @@
-module openplay_coin_flip::backend;
+module openplay_coin_flip::game;
 
 use openplay_coin_flip::constants::{
     head_result,
@@ -11,16 +11,17 @@ use openplay_coin_flip::constants::{
 };
 use openplay_coin_flip::context::{Self, CoinFlipContext};
 use openplay_coin_flip::state::{Self, CoinFlipState};
-use openplay_core::balance_manager::{BalanceManager, PlayCap, generate_proof_as_player};
-use openplay_core::house::{Self, House, HouseAdminCap, cap_house_id};
+use openplay_core::balance_manager::{BalanceManager, PlayCap};
+use openplay_core::house::{House, HouseTransactionCap};
 use openplay_core::referral::Referral;
+use openplay_core::registry::Registry;
 use openplay_core::transaction::{Transaction, bet, win};
 use std::string::String;
 use std::uq32_32::{UQ32_32, from_quotient, int_mul};
 use sui::random::{Random, RandomGenerator};
 use sui::table::{Self, Table};
+use sui::transfer::share_object;
 use sui::vec_set::{Self, VecSet};
-use sui::versioned::{Self, Versioned};
 
 // === Errors ===
 const EUnsupportedHouseEdge: u64 = 1;
@@ -31,27 +32,23 @@ const EUnsupportedAction: u64 = 5;
 const EPackageVersionDisabled: u64 = 6;
 const EVersionAlreadyAllowed: u64 = 7;
 const EVersionAlreadyDisallowed: u64 = 8;
-const EUnauthorized: u64 = 9;
 
 // === Structs ===
-public struct Backend has key {
-    id: UID,
-    inner: Versioned,
-}
+public struct GAME has drop {}
 
-public struct BackendAdminCap has key, store {
+public struct Game has key {
     id: UID,
-    backend_id: ID,
-}
-
-public struct BackendInner has store {
     allowed_versions: VecSet<u64>,
     max_stake: u64,
     house_edge_bps: u64, // House bias in basis points (e.g. `100` will give the house a 1% change of winning)
     payout_factor_bps: u64, // Payout factor in basis points (e.g. `20_000` will give 2x or 200% of stake)
-    house_cap: HouseAdminCap,
+    house_tx_cap: HouseTransactionCap,
     contexts: Table<ID, CoinFlipContext>,
     state: CoinFlipState, // Global state specific to the CoinFLip game
+}
+
+public struct CoinFlipCap has key, store {
+    id: UID,
 }
 
 public struct Interaction has copy, drop, store {
@@ -64,13 +61,19 @@ public enum InteractionType has copy, drop, store {
     PLACE_BET { stake: u64, prediction: String },
 }
 
+fun init(_: GAME, ctx: &mut TxContext) {
+    let admin = CoinFlipCap { id: object::new(ctx) };
+    transfer::public_transfer(admin, ctx.sender());
+}
+
 // === Public-View Functions ===
-public fun id(self: &Backend): ID {
+public fun id(self: &Game): ID {
+    self.assert_version();
     self.id.to_inner()
 }
 
-public fun house_edge_bps(self: &Backend): u64 {
-    let self = self.load_inner();
+public fun house_edge_bps(self: &Game): u64 {
+    self.assert_version();
     self.house_edge_bps
 }
 
@@ -78,65 +81,27 @@ public fun transactions(interaction: &Interaction): vector<Transaction> {
     interaction.transactions
 }
 
-public fun get_context(self: &mut Backend, balance_manager: &BalanceManager): &CoinFlipContext {
-    let self = self.load_inner_mut();
+public fun get_context(self: &mut Game, balance_manager: &BalanceManager): &CoinFlipContext {
+    self.assert_version();
     self.ensure_context(balance_manager.id());
     self.contexts.borrow(balance_manager.id())
 }
 
-public fun max_stake(self: &Backend): u64 {
-    let self = self.load_inner();
+public fun max_stake(self: &Game): u64 {
+    self.assert_version();
     self.max_stake
 }
 
-public fun house_id(self: &Backend): ID {
-    let self = self.load_inner();
-    self.house_cap.cap_house_id()
+public fun house_id(self: &Game): ID {
+    self.assert_version();
+    self.house_tx_cap.transaction_cap_house_id()
 }
 
 // === Public-Mutative Functions ===
-public fun new(
-    max_stake: u64,
-    house_edge_bps: u64,
-    payout_factor_bps: u64,
-    target_balance: u64,
-    referral_fee: u64,
-    ctx: &mut TxContext,
-): (Backend, BackendAdminCap, House) {
-    assert!(house_edge_bps < max_house_edge_bps(), EUnsupportedHouseEdge);
-    assert!(payout_factor_bps < max_payout_factor_bps(), EUnsupportedPayoutFactor);
-
-    let mut allowed_versions = vec_set::empty();
-    allowed_versions.insert(current_version());
-
-    let (house, house_cap) = house::new(target_balance, referral_fee, ctx);
-
-    let backend_inner = BackendInner {
-        allowed_versions: allowed_versions,
-        max_stake,
-        house_edge_bps,
-        payout_factor_bps,
-        house_cap,
-        contexts: table::new(ctx),
-        state: state::empty(),
-    };
-
-    let backend_id = object::new(ctx);
-    let backend_admin_cap = BackendAdminCap {
-        id: object::new(ctx),
-        backend_id: backend_id.to_inner(),
-    };
-    let backend = Backend {
-        id: backend_id,
-        inner: versioned::create(current_version(), backend_inner, ctx),
-    };
-
-    (backend, backend_admin_cap, house)
-}
-
 /// Interact entry function with referral
 entry fun interact_with_referral(
-    self: &mut Backend,
+    self: &mut Game,
+    registry: &Registry,
     balance_manager: &mut BalanceManager,
     house: &mut House,
     referral: &Referral,
@@ -147,10 +112,7 @@ entry fun interact_with_referral(
     random: &Random,
     ctx: &mut TxContext,
 ) {
-    let self = self.load_inner_mut();
-
-    // Generate proof
-    let play_proof = balance_manager.generate_proof_as_player(play_cap, ctx);
+    self.assert_version();
 
     // Make sure we have enough funds in the house to play this game
     house.ensure_sufficient_funds(self.max_payout(stake), ctx);
@@ -166,11 +128,12 @@ entry fun interact_with_referral(
     self.interact_int(&mut interact, &mut random_generator);
 
     // Process transactions by house
-    house.admin_process_transactions_with_referral(
-        &self.house_cap,
+    house.tx_admin_process_transactions_with_referral(
+        registry,
+        &self.house_tx_cap,
         balance_manager,
         &interact.transactions(),
-        &play_proof,
+        play_cap,
         referral,
         ctx,
     );
@@ -178,7 +141,8 @@ entry fun interact_with_referral(
 
 /// Interact entry function without referral
 entry fun interact(
-    self: &mut Backend,
+    self: &mut Game,
+    registry: &Registry,
     balance_manager: &mut BalanceManager,
     house: &mut House,
     play_cap: &PlayCap,
@@ -188,9 +152,7 @@ entry fun interact(
     random: &Random,
     ctx: &mut TxContext,
 ) {
-    let self = self.load_inner_mut();
-    // Generate proof
-    let play_proof = balance_manager.generate_proof_as_player(play_cap, ctx);
+    self.assert_version();
 
     // Make sure we have enough funds in the house to play this game
     house.ensure_sufficient_funds(self.max_payout(stake), ctx);
@@ -206,55 +168,65 @@ entry fun interact(
     self.interact_int(&mut interact, &mut random_generator);
 
     // Process transactions by house
-    house.admin_process_transactions(
-        &self.house_cap,
+    house.tx_admin_process_transactions(
+        registry,
+        &self.house_tx_cap,
         balance_manager,
         &interact.transactions(),
-        &play_proof,
+        play_cap,
         ctx,
     );
 }
 
-// === Admin Functions ===
-public fun admin_allow_version(self: &mut Backend, cap: &BackendAdminCap, version: u64) {
-    self.validate_admin(cap);
+public fun share(game: Game) {
+    share_object(game);
+}
 
-    let self = self.load_inner_mut();
+// === Admin Functions ===
+public fun admin_create(
+    _cap: &CoinFlipCap,
+    tx_cap: HouseTransactionCap,
+    max_stake: u64,
+    house_edge_bps: u64,
+    payout_factor_bps: u64,
+    ctx: &mut TxContext,
+): Game {
+    assert!(house_edge_bps < max_house_edge_bps(), EUnsupportedHouseEdge);
+    assert!(payout_factor_bps < max_payout_factor_bps(), EUnsupportedPayoutFactor);
+
+    let mut allowed_versions = vec_set::empty();
+    allowed_versions.insert(current_version());
+
+    Game {
+        id: object::new(ctx),
+        allowed_versions: allowed_versions,
+        max_stake,
+        house_edge_bps,
+        payout_factor_bps,
+        house_tx_cap: tx_cap,
+        contexts: table::new(ctx),
+        state: state::empty(),
+    }
+}
+
+public fun admin_allow_version(self: &mut Game, _cap: &CoinFlipCap, version: u64) {
     assert!(!self.allowed_versions.contains(&version), EVersionAlreadyAllowed);
     self.allowed_versions.insert(version);
 }
 
-public fun admin_disallow_version(self: &mut Backend, cap: &BackendAdminCap, version: u64) {
-    self.validate_admin(cap);
-
-    let self = self.load_inner_mut();
+public fun admin_disallow_version(self: &mut Game, _cap: &CoinFlipCap, version: u64) {
     assert!(self.allowed_versions.contains(&version), EVersionAlreadyDisallowed);
     self.allowed_versions.remove(&version);
 }
 
 // === Public-Package Functions ===
-public(package) fun load_inner(self: &Backend): &BackendInner {
-    let inner: &BackendInner = self.inner.load_value();
-    let package_version = current_version();
-    assert!(inner.allowed_versions.contains(&package_version), EPackageVersionDisabled);
-
-    inner
-}
-
-public(package) fun load_inner_mut(self: &mut Backend): &mut BackendInner {
-    let inner: &mut BackendInner = self.inner.load_value_mut();
-    let package_version = current_version();
-    assert!(inner.allowed_versions.contains(&package_version), EPackageVersionDisabled);
-
-    inner
-}
-
 public(package) fun interact_int(
-    self: &mut BackendInner,
+    self: &mut Game,
     interaction: &mut Interaction,
     rand: &mut RandomGenerator,
 ) {
     // Validate the interaction
+    self.assert_version();
     self.validate_interact(interaction);
 
     let payout_factor = self.payout_factor();
@@ -319,7 +291,7 @@ public(package) fun new_interact(
 }
 
 // === Private Functions ===
-fun validate_interact(self: &BackendInner, interaction: &Interaction) {
+fun validate_interact(self: &Game, interaction: &Interaction) {
     match (interaction.interact_type) {
         InteractionType::PLACE_BET { stake, prediction: prediction } => {
             assert!(stake < self.max_stake, EUnsupportedStake);
@@ -331,21 +303,28 @@ fun validate_interact(self: &BackendInner, interaction: &Interaction) {
     }
 }
 
-fun ensure_context(self: &mut BackendInner, balance_manager_id: ID) {
+fun ensure_context(self: &mut Game, balance_manager_id: ID) {
     if (!self.contexts.contains(balance_manager_id)) {
         self.contexts.add(balance_manager_id, context::empty());
     };
 }
 
-fun validate_admin(self: &Backend, cap: &BackendAdminCap) {
-    assert!(self.id.to_inner() == cap.backend_id, EUnauthorized);
-}
-
-fun payout_factor(self: &BackendInner): UQ32_32 {
+fun payout_factor(self: &Game): UQ32_32 {
     from_quotient(self.payout_factor_bps, 10_000)
 }
 
 /// Gets the max payout of the game. This ensures that the vault has sufficient funds to accept the bet.
-fun max_payout(self: &BackendInner, stake: u64): u64 {
+fun max_payout(self: &Game, stake: u64): u64 {
     int_mul(stake, self.payout_factor())
+}
+
+public fun assert_version(self: &Game) {
+    let package_version = current_version();
+    assert!(self.allowed_versions.contains(&package_version), EPackageVersionDisabled);
+}
+
+// === Test Functions ===
+#[test_only]
+public fun get_admin_cap_for_testing(ctx: &mut TxContext): CoinFlipCap {
+    CoinFlipCap { id: object::new(ctx) }
 }

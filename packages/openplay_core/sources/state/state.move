@@ -4,10 +4,10 @@
 module openplay_core::state;
 
 use openplay_core::account::{Self, Account};
-use openplay_core::constants::{protocol_fee};
 use openplay_core::history::{Self, History};
 use openplay_core::participation::Participation;
 use openplay_core::transaction::{Transaction, is_credit};
+use std::option::do;
 use std::uq32_32::{UQ32_32, int_mul};
 use sui::table::{Self, Table};
 
@@ -22,7 +22,7 @@ const EUnknownTransaction: u64 = 1;
 
 // == Public-Package Functions ==
 /// Process the transactions in the given state by updating the history and account.
-/// Returns a tuple (credit_balance, debit_balance, referral_fee, protocol_fee).
+/// Returns a tuple (credit_balance, debit_balance, house_fee, protocol_fee, referral_fee).
 /// The first two values are the to_credit and to_debit balance by the balance manager.
 /// The last two values are the fees taken by the owner and protocol.
 /// These are calculated by the state because they might depend on state values (such as volumes).
@@ -31,8 +31,10 @@ public(package) fun process_transactions(
     self: &mut State,
     transactions: &vector<Transaction>,
     balance_manager_id: ID,
-    referral_fee_factor: UQ32_32
-): (u64, u64, u64, u64) {
+    house_fee_factor: UQ32_32,
+    protocol_fee_factor: UQ32_32,
+    referral_fee_factor: Option<UQ32_32>,
+): (u64, u64, u64, u64, u64) {
     self.update_account(balance_manager_id);
 
     // Process transactions on the account
@@ -42,13 +44,18 @@ public(package) fun process_transactions(
     self.process_transactions_for_history(transactions);
 
     // Calculate fees
-    let referral_fee = total_referral_fee(transactions, referral_fee_factor);
-    let protocol_fee = total_protocol_fee(transactions);
+    let house_fee = calculate_fee(transactions, house_fee_factor);
+    let protocol_fee = calculate_fee(transactions, protocol_fee_factor);
+    // If a referral_fee_factor is provided, we calculate the referral_fee
+    let mut referral_fee = 0;
+    referral_fee_factor.do!(
+        |referral_fee_factor| referral_fee = calculate_fee(transactions, referral_fee_factor),
+    );
 
     // Settle account balance
     let (credit_balance, debit_balance) = self.accounts[balance_manager_id].settle();
 
-    (credit_balance, debit_balance, referral_fee, protocol_fee)
+    (credit_balance, debit_balance, house_fee, protocol_fee, referral_fee)
 }
 
 /// Processes a stake transaction in the game.
@@ -166,24 +173,12 @@ fun process_transactions_for_history(self: &mut State, transactions: &vector<Tra
     });
 }
 
-/// Calculates the total fee for the protocol based on the transactions
-fun total_protocol_fee(transactions: &vector<Transaction>): u64 {
-    let mut total_fee = 0;
-    transactions.do_ref!(|tx| {
-        if (tx.is_debit()) {
-            let fee_amount = int_mul(tx.amount(), protocol_fee());
-            total_fee = total_fee + fee_amount;
-        }
-    });
-    total_fee
-}
-
 /// Calculates the total fee for the owner based on the transactions
-fun total_referral_fee(transactions: &vector<Transaction>, referral_fee_factor: UQ32_32): u64 {
+fun calculate_fee(transactions: &vector<Transaction>, house_fee_factor: UQ32_32): u64 {
     let mut total_fee = 0;
     transactions.do_ref!(|tx| {
         if (tx.is_debit()) {
-            let fee_amount = int_mul(tx.amount(), referral_fee_factor);
+            let fee_amount = int_mul(tx.amount(), house_fee_factor);
             total_fee = total_fee + fee_amount
         }
     });

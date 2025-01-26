@@ -20,7 +20,7 @@ public struct Participation has key, store {
     active_stake: u64,
     inactive_stake: u64,
     claimable_balance: u64,
-    unstake_requested: bool
+    unstake_requested: bool,
 }
 
 // === Public-View Functions ===
@@ -47,10 +47,17 @@ public fun destroy_empty(self: Participation, ctx: &mut TxContext) {
     assert!(self.inactive_stake == 0, ENotEmpty);
     assert!(self.claimable_balance == 0, ENotEmpty);
 
-    let Participation {id, house_id: _, last_updated_epoch: _, active_stake: _, inactive_stake: _, claimable_balance: _, unstake_requested: _} = self;
+    let Participation {
+        id,
+        house_id: _,
+        last_updated_epoch: _,
+        active_stake: _,
+        inactive_stake: _,
+        claimable_balance: _,
+        unstake_requested: _,
+    } = self;
     object::delete(id);
 }
-
 
 // === Public-Package Functions ===
 /// Create a new house participation object. The stake is added to the `inactive_stake` and is activated in the next epoch.
@@ -62,7 +69,7 @@ public(package) fun empty(house_id: ID, ctx: &mut TxContext): Participation {
         active_stake: 0,
         inactive_stake: 0,
         claimable_balance: 0,
-        unstake_requested: false
+        unstake_requested: false,
     }
 }
 
@@ -70,7 +77,7 @@ public(package) fun add_inactive_stake(self: &mut Participation, amount: u64, ct
     assert!(self.last_updated_epoch == ctx.epoch(), EEpochMismatch);
     assert!(self.unstake_requested == false, ECancellationWasRequested);
     self.inactive_stake = self.inactive_stake + amount;
-} 
+}
 
 /// Unstakes the account. This does two things
 /// 1) The inactive stake is returned immediately
@@ -97,21 +104,25 @@ public(package) fun unstake(self: &mut Participation, ctx: &TxContext): (u64, u6
     return (prev_inactive_stake, self.active_stake)
 }
 
-public(package) fun process_end_of_day(self: &mut Participation, epoch: u64, profits: u64, losses: u64,  ctx: &TxContext) {
+public(package) fun process_end_of_day(
+    self: &mut Participation,
+    epoch: u64,
+    profits: u64,
+    losses: u64,
+    ctx: &TxContext,
+) {
     assert!(profits == 0 || losses == 0, EInvalidGgrShare);
     assert!(self.last_updated_epoch == epoch, EEpochMismatch);
     assert!(ctx.epoch() > self.last_updated_epoch, EEpochHasNotFinishedYet);
     if (profits > 0) {
         self.active_stake = self.active_stake + profits;
     } else if (losses > 0) {
-        if (self.active_stake >= losses){
+        if (self.active_stake >= losses) {
             self.active_stake = self.active_stake - losses;
-        }
-        else if (losses - self.active_stake <= precision_error_allowance()){
+        } else if (losses - self.active_stake <= precision_error_allowance()) {
             // Small rounding errors
             self.active_stake = 0;
-        }
-        else {
+        } else {
             abort EInvalidProfitsOrLosses
         }
     };

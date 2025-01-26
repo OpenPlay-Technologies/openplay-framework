@@ -1,10 +1,10 @@
 #[test_only]
 module openplay_core::participation_tests;
 
-use openplay_core::participation::{Self};
+use openplay_core::core_test_utils::default_house;
+use openplay_core::participation;
 use sui::test_scenario::begin;
 use sui::test_utils::destroy;
-use openplay_core::house::empty_house_for_testing;
 
 #[test]
 public fun stake_unstake_ok() {
@@ -12,7 +12,7 @@ public fun stake_unstake_ok() {
     let mut scenario = begin(addr);
 
     // Create participation
-    let house = empty_house_for_testing(0, 0, scenario.ctx());
+    let (house, admin_cap, tx_cap) = default_house(scenario.ctx());
     let mut participation = participation::empty(house.id(), scenario.ctx());
 
     // Stake 10
@@ -50,9 +50,11 @@ public fun stake_unstake_ok() {
     scenario.next_epoch(addr);
     participation.process_end_of_day(1, 0, 0, scenario.ctx());
     assert!(participation.claimable_balance() == 25);
-    
+
     destroy(participation);
     destroy(house);
+    destroy(admin_cap);
+    destroy(tx_cap);
     scenario.end();
 }
 
@@ -62,7 +64,7 @@ public fun cannot_unstake_twice() {
     let mut scenario = begin(addr);
 
     // Create participation
-    let house = empty_house_for_testing(0, 0, scenario.ctx());
+    let (house, _admin_cap, _tx_cap) = default_house(scenario.ctx());
     let mut participation = participation::empty(house.id(), scenario.ctx());
 
     // Stake 10
@@ -83,7 +85,7 @@ public fun cannot_stake_after_unstake() {
     let mut scenario = begin(addr);
 
     // Create participation
-    let house = empty_house_for_testing(0, 0, scenario.ctx());
+    let (house, _admin_cap, _tx_cap) = default_house(scenario.ctx());
     let mut participation = participation::empty(house.id(), scenario.ctx());
 
     // Stake 10
@@ -104,7 +106,7 @@ public fun process_ggr_share_ok() {
     let mut scenario = begin(addr);
 
     // Create participation
-    let house = empty_house_for_testing(0, 0, scenario.ctx());
+    let (house, admin_cap, tx_cap) = default_house(scenario.ctx());
     let mut participation = participation::empty(house.id(), scenario.ctx());
 
     assert!(participation.active_stake() == 0);
@@ -123,6 +125,8 @@ public fun process_ggr_share_ok() {
 
     destroy(participation);
     destroy(house);
+    destroy(admin_cap);
+    destroy(tx_cap);
     scenario.end();
 }
 
@@ -132,7 +136,7 @@ public fun cannot_stake_invalid_epoch() {
     let mut scenario = begin(addr);
 
     // Create participation
-    let house = empty_house_for_testing(0, 0, scenario.ctx());
+    let (house, _admin_cap, _tx_cap) = default_house(scenario.ctx());
     let mut participation = participation::empty(house.id(), scenario.ctx());
 
     // Advance epoch
@@ -148,7 +152,7 @@ public fun cannot_unstake_invalid_epoch() {
     let mut scenario = begin(addr);
 
     // Create participation
-    let house = empty_house_for_testing(0, 0, scenario.ctx());
+    let (house, _admin_cap, _tx_cap) = default_house(scenario.ctx());
     let mut participation = participation::empty(house.id(), scenario.ctx());
     participation.add_inactive_stake(10, scenario.ctx());
 
@@ -165,7 +169,7 @@ public fun cannot_process_eod_invalid_epoch() {
     let mut scenario = begin(addr);
 
     // Create participation
-    let house = empty_house_for_testing(0, 0, scenario.ctx());
+    let (house, _admin_cap, _tx_cap) = default_house(scenario.ctx());
     let mut participation = participation::empty(house.id(), scenario.ctx());
     participation.add_inactive_stake(10, scenario.ctx());
 

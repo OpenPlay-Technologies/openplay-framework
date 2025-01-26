@@ -2,17 +2,15 @@
 module openplay_core::vault_tests;
 
 use openplay_core::balance_manager;
-use openplay_core::vault;
 use openplay_core::referral;
+use openplay_core::vault;
 use sui::coin::mint_for_testing;
 use sui::sui::SUI;
 use sui::test_scenario::{begin, next_epoch};
 use sui::test_utils::destroy;
-use std::string::utf8;
 
 #[test]
-public fun deposit_withdraw_ok(){
-
+public fun deposit_withdraw_ok() {
     let addr = @0xA;
     let mut scenario = begin(addr);
 
@@ -170,29 +168,23 @@ public fun process_fees_ok() {
         let mut vault = vault::empty(scenario.ctx());
         vault.fund_play_balance_for_testing(100, scenario.ctx());
 
-        let (referral, referral_admin_cap) = referral::new(utf8(b""), utf8(b""), utf8(b""), scenario.ctx());
+        let (referral, referral_cap) = referral::new(object::id_from_address(@0xA), scenario.ctx());
 
         // Process fees (both)
-        vault.process_protocol_fee(20);
-        vault.process_referral_fee(referral.id(), 10);
-        assert!(vault.play_balance() == 70);
-        assert!(vault.collected_referral_fees(referral.id()) == 10);
-        assert!(vault.collected_protocol_fees() == 20);
+        vault.process_house_fee_with_referral(5, referral.id(), 5);
+        assert!(vault.play_balance() == 90);
+        assert!(vault.collected_referral_fees(referral.id()) == 5);
+        assert!(vault.collected_house_fees() == 5);
 
-        // Process fees (just referral)
-        vault.process_referral_fee(referral.id(), 10);
-        assert!(vault.play_balance() == 60);
-        assert!(vault.collected_referral_fees(referral.id()) == 20);
-        assert!(vault.collected_protocol_fees() == 20);
-
-        // Process fees (just protocol)
-        vault.process_protocol_fee(10);
-        assert!(vault.play_balance() == 50);
-        assert!(vault.collected_protocol_fees() == 30);
+        // Process fees (just game)
+        vault.process_house_fee(10);
+        assert!(vault.play_balance() == 80);
+        assert!(vault.collected_referral_fees(referral.id()) == 5);
+        assert!(vault.collected_house_fees() == 15);
 
         destroy(vault);
         destroy(referral);
-        destroy(referral_admin_cap);
+        destroy(referral_cap);
     };
     scenario.end();
 }
@@ -207,25 +199,7 @@ public fun process_protocol_fees_fail() {
         vault.fund_play_balance_for_testing(100, scenario.ctx());
 
         // Process fees
-        vault.process_protocol_fee(101);
-        destroy(vault);
-        abort 0
-    }
-}
-
-#[test, expected_failure(abort_code = vault::EInsufficientFunds)]
-public fun process_referral_fees_fail() {
-    let addr = @0xA;
-    let mut scenario = begin(addr);
-    {
-        let (referral, _referral_admin_cap) = referral::new(utf8(b""), utf8(b""), utf8(b""), scenario.ctx());
-
-        // Create and fund vault with 100 MIST
-        let mut vault = vault::empty(scenario.ctx());
-        vault.fund_play_balance_for_testing(100, scenario.ctx());
-
-        // Process fees
-        vault.process_referral_fee(referral.id(), 101);
+        vault.process_house_fee(101);
         destroy(vault);
         abort 0
     }
@@ -265,7 +239,7 @@ public fun update_epoch() {
 
         // Simulate some profits and deduce some fees
         vault.fund_play_balance_for_testing(20, scenario.ctx());
-        vault.process_protocol_fee(10);
+        vault.process_house_fee(10);
         assert!(vault.play_balance() == 110); // increased by 10
         assert!(vault.reserve_balance() == 50); // the same
 
@@ -292,7 +266,7 @@ public fun update_epoch() {
         assert!(play_balance_funded == true);
         assert!(vault.play_balance() == 0);
         assert!(vault.reserve_balance() == 160);
-        assert!(vault.collected_protocol_fees() == 10);
+        assert!(vault.collected_house_fees() == 10);
         // Activate vault
         vault.activate(target_balance);
         assert!(vault.reserve_balance() == 60); // 60 is left in reserve
@@ -300,7 +274,7 @@ public fun update_epoch() {
 
         // Simulate losses and deduce some fees
         vault.burn_play_balance_for_testing(60, scenario.ctx());
-        vault.process_protocol_fee(10);
+        vault.process_house_fee(10);
         assert!(vault.play_balance() == 30); // reduced by 60
         assert!(vault.reserve_balance() == 60); // the same
 
@@ -318,7 +292,7 @@ public fun update_epoch() {
         assert!(play_balance_funded == true);
         assert!(vault.play_balance() == 0);
         assert!(vault.reserve_balance() == 90);
-        assert!(vault.collected_protocol_fees() == 20);
+        assert!(vault.collected_house_fees() == 20);
 
         destroy(vault);
     };

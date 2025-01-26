@@ -7,17 +7,19 @@ use openplay_core::balance_manager::{BalanceManager, PlayProof};
 use openplay_core::constants::precision_error_allowance;
 use sui::balance::{Self, Balance};
 use sui::sui::SUI;
-use sui::table::{Self, Table};
+use sui::vec_map::{Self, VecMap};
 
 // === Errors ===
 const EInsufficientFunds: u64 = 1;
 const EVaultNotActive: u64 = 2;
+const EReferralDoesNotExist: u64 = 3;
 
 // === Structs ===
 public struct Vault has store {
     epoch: u64,
+    collected_house_fees: Balance<SUI>,
     collected_protocol_fees: Balance<SUI>,
-    collected_referral_fees: Table<ID, Balance<SUI>>,
+    collected_referral_fees: VecMap<ID, Balance<SUI>>,
     play_balance: Balance<SUI>,
     reserve_balance: Balance<SUI>,
     active: bool, // A boolean indicating whether the vault has been activated by stake, and the play_balance funded
@@ -33,7 +35,12 @@ public fun reserve_balance(self: &Vault): u64 {
 }
 
 public fun collected_referral_fees(self: &Vault, referral_id: ID): u64 {
-    self.collected_referral_fees[referral_id].value()
+    assert!(self.collected_referral_fees.contains(&referral_id), EReferralDoesNotExist);
+    self.collected_referral_fees[&referral_id].value()
+}
+
+public fun collected_house_fees(self: &Vault): u64 {
+    self.collected_house_fees.value()
 }
 
 public fun collected_protocol_fees(self: &Vault): u64 {
@@ -51,11 +58,12 @@ public fun active(self: &Vault): bool {
 // === Public-Package Functions ===
 
 /// Creates an empty vault, with all balances initialized to zero and the epoch set to the current epoch.
-public(package) fun empty(ctx: &mut TxContext): Vault {
+public(package) fun empty(ctx: &TxContext): Vault {
     Vault {
         epoch: ctx.epoch(),
+        collected_referral_fees: vec_map::empty(),
         collected_protocol_fees: balance::zero(),
-        collected_referral_fees: table::new(ctx),
+        collected_house_fees: balance::zero(),
         play_balance: balance::zero(),
         reserve_balance: balance::zero(),
         active: false,
@@ -102,7 +110,17 @@ public(package) fun withdraw(self: &mut Vault, amount: u64): Balance<SUI> {
 
 public(package) fun withdraw_referral_fees(self: &mut Vault, referral_id: ID): Balance<SUI> {
     self.ensure_referral_fee_balance(referral_id);
-    self.collected_referral_fees.borrow_mut(referral_id).withdraw_all()
+
+    let balance = &mut self.collected_referral_fees[&referral_id];
+    balance.withdraw_all()
+}
+
+public(package) fun withdraw_house_fees(self: &mut Vault): Balance<SUI> {
+    self.collected_house_fees.withdraw_all()
+}
+
+public(package) fun withdraw_protocol_fees(self: &mut Vault): Balance<SUI> {
+    self.collected_protocol_fees.withdraw_all()
 }
 
 /// Settles the balances between the `vault` and `balance_manager`.
@@ -121,9 +139,7 @@ public(package) fun settle_balance_manager(
         let balance;
         if (self.play_balance.value() >= amount_out - amount_in) {
             balance = self.play_balance.split(amount_out - amount_in);
-        } else if (
-            amount_out - amount_in - self.play_balance.value() <= precision_error_allowance()
-        ) {
+        } else if (amount_out - amount_in - self.play_balance.value() <= precision_error_allowance()) {
             // Small precision errors
             balance = self.play_balance.withdraw_all();
         } else {
@@ -138,16 +154,6 @@ public(package) fun settle_balance_manager(
     };
 }
 
-/// Process the fees of the game owner and protocol.
-public(package) fun process_referral_fee(self: &mut Vault, referral_id: ID, referral_fee: u64) {
-    assert!(self.play_balance.value() >= referral_fee, EInsufficientFunds);
-    if (referral_fee > 0) {
-        self.ensure_referral_fee_balance(referral_id);
-        let balance = self.play_balance.split(referral_fee);
-        self.collected_referral_fees.borrow_mut(referral_id).join(balance);
-    };
-}
-
 public(package) fun process_protocol_fee(self: &mut Vault, protocol_fee: u64) {
     assert!(self.play_balance.value() >= protocol_fee, EInsufficientFunds);
     if (protocol_fee > 0) {
@@ -156,10 +162,37 @@ public(package) fun process_protocol_fee(self: &mut Vault, protocol_fee: u64) {
     };
 }
 
+public(package) fun process_house_fee(self: &mut Vault, house_fee: u64) {
+    assert!(self.play_balance.value() >= house_fee, EInsufficientFunds);
+    if (house_fee > 0) {
+        let balance = self.play_balance.split(house_fee);
+        self.collected_house_fees.join(balance);
+    };
+}
+
+public(package) fun process_house_fee_with_referral(
+    self: &mut Vault,
+    house_fee: u64,
+    referral_id: ID,
+    referral_fee: u64,
+) {
+    assert!(self.play_balance.value() >= referral_fee + house_fee, EInsufficientFunds);
+    if (house_fee > 0) {
+        let balance = self.play_balance.split(house_fee);
+        self.collected_house_fees.join(balance);
+    };
+    if (referral_fee > 0) {
+        self.ensure_referral_fee_balance(referral_id);
+        let balance = self.play_balance.split(referral_fee);
+        let referral_balance = &mut self.collected_referral_fees[&referral_id];
+        referral_balance.join(balance);
+    };
+}
+
 // === Private Functions ===
-fun ensure_referral_fee_balance(self: &mut Vault, game_id: ID) {
-    if (!self.collected_referral_fees.contains(game_id)) {
-        self.collected_referral_fees.add(game_id, balance::zero());
+fun ensure_referral_fee_balance(self: &mut Vault, referral_id: ID) {
+    if (!self.collected_referral_fees.contains(&referral_id)) {
+        self.collected_referral_fees.insert(referral_id, balance::zero());
     };
 }
 
@@ -191,10 +224,17 @@ public fun burn_reserve_balance_for_testing(self: &mut Vault, amount: u64, ctx: 
 #[test_only]
 public fun fund_referral_fees_for_testing(
     self: &mut Vault,
-    game_id: ID,
+    referral_id: ID,
     amount: u64,
     ctx: &mut TxContext,
 ) {
     let balance = sui::coin::mint_for_testing(amount, ctx).into_balance();
-    self.collected_referral_fees.borrow_mut(game_id).join(balance);
+    let ref_balance = &mut self.collected_referral_fees[&referral_id];
+    ref_balance.join(balance);
+}
+
+#[test_only]
+public fun fund_protocol_fees_for_testing(self: &mut Vault, amount: u64, ctx: &mut TxContext) {
+    let balance = sui::coin::mint_for_testing(amount, ctx).into_balance();
+    self.collected_protocol_fees.join(balance);
 }

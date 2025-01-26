@@ -2,7 +2,7 @@
 module openplay_core::core_test_utils;
 
 use openplay_core::constants::precision_error_allowance;
-use openplay_core::house::House;
+use openplay_core::house::{Self, House, HouseAdminCap, HouseTransactionCap};
 use openplay_core::participation::Participation;
 use sui::coin::mint_for_testing;
 use sui::random::{Random, create_for_testing};
@@ -49,4 +49,10 @@ public fun fund_house_for_playing(
     let stake = mint_for_testing<SUI>(amount, ctx);
     house.stake(&mut participation, stake, ctx);
     participation
+}
+
+public fun default_house(ctx: &mut TxContext) : (House, HouseAdminCap, HouseTransactionCap){
+    let (mut house, house_admin) = house::new( false, 100_000, 99, 69, ctx);
+    let tx_cap = house.admin_mint_tx_cap(&house_admin, ctx);
+    (house, house_admin, tx_cap)
 }

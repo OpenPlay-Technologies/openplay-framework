@@ -25,7 +25,7 @@ const MAX_PLAY_CAPS: u64 = 1000;
 public struct BalanceManager has key {
     id: UID,
     balance: Balance<SUI>,
-    allow_listed: VecSet<ID>,
+    tx_allow_listed: VecSet<ID>,
 }
 
 public struct BalanceManagerCap has key, store {
@@ -85,7 +85,7 @@ public fun new(ctx: &mut TxContext): (BalanceManager, BalanceManagerCap) {
     let balance_manager = BalanceManager {
         id: object::new(ctx),
         balance: balance::zero(),
-        allow_listed: vec_set::empty(),
+        tx_allow_listed: vec_set::empty(),
     };
     let balance_manager_cap = BalanceManagerCap {
         id: object::new(ctx),
@@ -105,10 +105,10 @@ public fun mint_play_cap(
     ctx: &mut TxContext,
 ): PlayCap {
     self.validate_owner(cap);
-    assert!(self.allow_listed.size() < MAX_PLAY_CAPS, EMaxPlayCapsReached);
+    assert!(self.tx_allow_listed.size() < MAX_PLAY_CAPS, EMaxPlayCapsReached);
 
     let id = object::new(ctx);
-    self.allow_listed.insert(id.to_inner());
+    self.tx_allow_listed.insert(id.to_inner());
 
     PlayCap {
         id,
@@ -120,8 +120,8 @@ public fun mint_play_cap(
 public fun revoke_play_cap(self: &mut BalanceManager, cap: &BalanceManagerCap, player_cap_id: &ID) {
     self.validate_owner(cap);
 
-    assert!(self.allow_listed.contains(player_cap_id), EPlayCapNotInList);
-    self.allow_listed.remove(player_cap_id);
+    assert!(self.tx_allow_listed.contains(player_cap_id), EPlayCapNotInList);
+    self.tx_allow_listed.remove(player_cap_id);
 }
 
 /// Generate a `PlayProof` by the owner.
@@ -222,8 +222,8 @@ fun validate_owner(self: &BalanceManager, cap: &BalanceManagerCap) {
     assert!(cap.balance_manager_id == self.id(), EInvalidOwner);
 }
 
-fun validate_player(balance_manager: &BalanceManager, trade_cap: &PlayCap) {
-    assert!(balance_manager.allow_listed.contains(object::borrow_id(trade_cap)), EInvalidPlayer);
+fun validate_player(balance_manager: &BalanceManager, play_cap: &PlayCap) {
+    assert!(balance_manager.tx_allow_listed.contains(object::borrow_id(play_cap)), EInvalidPlayer);
 }
 
 // === Test Functions ===
