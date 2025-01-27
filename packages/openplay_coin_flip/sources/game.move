@@ -22,6 +22,7 @@ use sui::random::{Random, RandomGenerator};
 use sui::table::{Self, Table};
 use sui::transfer::share_object;
 use sui::vec_set::{Self, VecSet};
+use sui::event::emit;
 
 // === Errors ===
 const EUnsupportedHouseEdge: u64 = 1;
@@ -31,7 +32,7 @@ const EUnsupportedPrediction: u64 = 4;
 const EUnsupportedAction: u64 = 5;
 const EPackageVersionDisabled: u64 = 6;
 const EVersionAlreadyAllowed: u64 = 7;
-const EVersionAlreadyDisallowed: u64 = 8;
+const EVersionAlreadyDisabled: u64 = 8;
 
 // === Structs ===
 public struct GAME has drop {}
@@ -60,6 +61,15 @@ public struct Interaction has copy, drop, store {
 public enum InteractionType has copy, drop, store {
     PLACE_BET { stake: u64, prediction: String },
 }
+
+
+// === Events ===
+public struct InteractedWithGame has copy, drop {
+    old_balance: u64,
+    new_balance: u64,
+    context: CoinFlipContext
+}
+
 
 fun init(_: GAME, ctx: &mut TxContext) {
     let admin = CoinFlipCap { id: object::new(ctx) };
@@ -128,6 +138,7 @@ entry fun interact_with_referral(
     self.interact_int(&mut interact, &mut random_generator);
 
     // Process transactions by house
+    let old_balance = balance_manager.balance();
     house.tx_admin_process_transactions_with_referral(
         registry,
         &self.house_tx_cap,
@@ -137,6 +148,14 @@ entry fun interact_with_referral(
         referral,
         ctx,
     );
+
+    // Emit event
+    let new_balance = balance_manager.balance();
+    emit(InteractedWithGame {
+        old_balance,
+        new_balance,
+        context: *self.get_context(balance_manager)
+    })
 }
 
 /// Interact entry function without referral
@@ -168,6 +187,7 @@ entry fun interact(
     self.interact_int(&mut interact, &mut random_generator);
 
     // Process transactions by house
+    let old_balance = balance_manager.balance();
     house.tx_admin_process_transactions(
         registry,
         &self.house_tx_cap,
@@ -176,6 +196,14 @@ entry fun interact(
         play_cap,
         ctx,
     );
+
+    // Emit event
+    let new_balance = balance_manager.balance();
+    emit(InteractedWithGame {
+        old_balance,
+        new_balance,
+        context: *self.get_context(balance_manager)
+    })
 }
 
 public fun share(game: Game) {
@@ -215,7 +243,7 @@ public fun admin_allow_version(self: &mut Game, _cap: &CoinFlipCap, version: u64
 }
 
 public fun admin_disallow_version(self: &mut Game, _cap: &CoinFlipCap, version: u64) {
-    assert!(self.allowed_versions.contains(&version), EVersionAlreadyDisallowed);
+    assert!(self.allowed_versions.contains(&version), EVersionAlreadyDisabled);
     self.allowed_versions.remove(&version);
 }
 

@@ -1,14 +1,15 @@
 /// Module representing a transaction, the building block for all money transfers.
 module openplay_core::transaction;
 
-// === Structs ===
-public enum TransactionType has copy, drop, store {
-    Bet,
-    Win,
-}
+use std::string::String;
+use openplay_core::constants::{tx_type_bet, tx_type_win};
 
+// === Errors ===
+const EUnknownTxType: u64 = 1;
+
+// === Structs ===
 public struct Transaction has copy, drop, store {
-    transaction_type: TransactionType,
+    transaction_type: String,
     amount: u64,
 }
 
@@ -20,10 +21,13 @@ public fun amount(self: &Transaction): u64 {
 /// Returns true if the transaction type is a credit.
 /// Returns false if the transaction type is a debit.
 public fun is_credit(self: &Transaction): bool {
-    match (self.transaction_type) {
-        TransactionType::Win => true,
-        TransactionType::Bet => false,
-    }
+    if (self.transaction_type == tx_type_win()){
+        return true
+    };
+    if (self.transaction_type == tx_type_bet()){
+        return false
+    };
+    abort EUnknownTxType
 }
 
 /// Returns false if the transaction type is a credit.
@@ -35,14 +39,14 @@ public fun is_debit(self: &Transaction): bool {
 // === Public-Mutative Functions ===
 public fun win(amount: u64): Transaction {
     Transaction {
-        transaction_type: TransactionType::Win,
+        transaction_type: tx_type_win(),
         amount,
     }
 }
 
 public fun bet(amount: u64): Transaction {
     Transaction {
-        transaction_type: TransactionType::Bet,
+        transaction_type: tx_type_bet(),
         amount: amount,
     }
 }

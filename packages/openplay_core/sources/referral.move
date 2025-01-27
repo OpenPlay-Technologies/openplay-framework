@@ -2,8 +2,6 @@ module openplay_core::referral;
 
 use sui::transfer::share_object;
 
-// === Errors ===
-
 // === Structs ===
 public struct Referral has key {
     id: UID,

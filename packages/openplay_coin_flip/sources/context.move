@@ -17,7 +17,7 @@ const EUnsupportedPrediction: u64 = 3;
 
 // === Structs ===
 // Context representing the current state of the game for a single user
-public struct CoinFlipContext has store {
+public struct CoinFlipContext has store, copy, drop {
     stake: u64,
     prediction: String,
     result: String,
