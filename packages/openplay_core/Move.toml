@@ -7,4 +7,4 @@ version = "0.0.1"
 Sui = { local = "../../../sui_from_source/crates/sui-framework/packages/sui-framework" }
 
 [addresses]
-openplay_core = "0x0"
+openplay_core = "0x3"

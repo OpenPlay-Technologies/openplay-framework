@@ -9,5 +9,5 @@ openplay_core = { local = "../openplay_core" }
 
 
 [addresses]
-openplay_coin_flip = "0x0"
+openplay_coin_flip = "0x4"
 

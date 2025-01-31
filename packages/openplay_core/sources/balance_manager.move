@@ -26,6 +26,7 @@ public struct BalanceManager has key {
     id: UID,
     balance: Balance<SUI>,
     tx_allow_listed: VecSet<ID>,
+    cap_id: ID
 }
 
 public struct BalanceManagerCap has key, store {
@@ -82,15 +83,20 @@ public fun balance(self: &BalanceManager): u64 {
 
 // === Public-Mutative Functions ===
 public fun new(ctx: &mut TxContext): (BalanceManager, BalanceManagerCap) {
+    let cap_id = object::new(ctx);
+
     let balance_manager = BalanceManager {
         id: object::new(ctx),
         balance: balance::zero(),
         tx_allow_listed: vec_set::empty(),
+        cap_id: cap_id.to_inner()
     };
+
     let balance_manager_cap = BalanceManagerCap {
-        id: object::new(ctx),
-        balance_manager_id: object::id(&balance_manager),
+        id: cap_id,
+        balance_manager_id: balance_manager.id(),
     };
+
     (balance_manager, balance_manager_cap)
 }
 
@@ -217,9 +223,14 @@ public(package) fun deposit_with_proof(
     self.balance.join(to_deposit);
 }
 
+public(package) fun ensure_sufficient_funds(self: &BalanceManager, amount: u64) {
+    assert!(self.balance.value() >= amount, EBalanceTooLow);
+}
+
 // === Private Functions ===
 fun validate_owner(self: &BalanceManager, cap: &BalanceManagerCap) {
     assert!(cap.balance_manager_id == self.id(), EInvalidOwner);
+    assert!(cap.id.as_inner() == self.cap_id, EInvalidOwner);
 }
 
 fun validate_player(balance_manager: &BalanceManager, play_cap: &PlayCap) {

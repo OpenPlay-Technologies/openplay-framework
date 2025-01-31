@@ -568,6 +568,43 @@ public fun complete_flow_multiple_funded_rounds() {
     scenario.end();
 }
 
+#[test, expected_failure(abort_code = balance_manager::EBalanceTooLow)]
+public fun insufficient_funds_should_fail() {
+    let addr = @0xa;
+    let mut scenario = begin(addr);
+
+    // Create a new house and balance manager
+    let registry = registry_for_testing(scenario.ctx());
+    let (mut house, _admin_cap, tx_cap) = default_house(scenario.ctx());
+    let mut participation = participation::empty(house.id(), scenario.ctx());
+    let (mut balance_manager, balance_manager_cap) = balance_manager::new(scenario.ctx());
+    let play_cap = balance_manager.mint_play_cap(&balance_manager_cap, scenario.ctx());
+
+    // Stake 100_000
+    let stake = mint_for_testing<SUI>(100_000, scenario.ctx());
+    house.stake(&mut participation, stake, scenario.ctx());
+    assert!(house.play_balance(scenario.ctx()) == 0); // house is yet to start
+
+    // Advance epoch
+    // At this point, the house starts. 100k is moved to the play balance
+    scenario.next_epoch(addr);
+    house.update_participation(&mut participation, scenario.ctx());
+    assert!(house.play_balance(scenario.ctx()) == 100_000); // house has stared
+
+    // Process some transactions
+    // a bet of 10k and a win of 20k
+    // This should fail
+    house.tx_admin_process_transactions(
+        &registry,
+        &tx_cap,
+        &mut balance_manager,
+        &vector[bet(10_000), win(20_000)],
+        &play_cap,
+        scenario.ctx(),
+    );
+    abort 0
+}
+
 #[test]
 public fun stake_unstake_ok() {
     let addr = @0xa;

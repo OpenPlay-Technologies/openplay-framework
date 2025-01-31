@@ -134,6 +134,8 @@ public(package) fun settle_balance_manager(
     play_proof: &PlayProof,
 ) {
     assert!(self.active, EVaultNotActive);
+    // No matter what, the balance manager should have sufficient funds to cover the debits
+    balance_manager.ensure_sufficient_funds(amount_in);
     if (amount_out > amount_in) {
         // Vault needs to pay the difference to the balance_manager
         let balance;

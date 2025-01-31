@@ -67,7 +67,8 @@ public enum InteractionType has copy, drop, store {
 public struct InteractedWithGame has copy, drop {
     old_balance: u64,
     new_balance: u64,
-    context: CoinFlipContext
+    context: CoinFlipContext,
+    balance_manager_id: ID
 }
 
 
