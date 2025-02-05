@@ -13,7 +13,6 @@ public fun deposit_withdraw_int() { let addr = @0xA; let mut scenario = begin(ad
         let proof = balance_manager.generate_proof_as_owner(&balance_manager_cap, scenario.ctx());
         assert!(balance_manager.balance() == 0);
 
-
         // Deposit 100 OK
         let deposit_balance = mint_for_testing<SUI>(100, scenario.ctx()).into_balance();
         balance_manager.deposit_with_proof(&proof, deposit_balance);
@@ -29,7 +28,6 @@ public fun deposit_withdraw_int() { let addr = @0xA; let mut scenario = begin(ad
         destroy(balance_manager);
         abort 0
     } }
-
 
 #[test, expected_failure(abort_code = balance_manager::EBalanceTooLow)]
 public fun deposit_withdraw() { let addr = @0xA; let mut scenario = begin(addr); {
@@ -56,7 +54,7 @@ public fun deposit_withdraw() { let addr = @0xA; let mut scenario = begin(addr);
 public fun play_cap_and_proofs_ok() {
     let addr = @0xA;
     let mut scenario = begin(addr);
-    
+
     let (mut balance_manager, balance_manager_cap) = balance_manager::new(scenario.ctx());
 
     let play_cap = balance_manager.mint_play_cap(&balance_manager_cap, scenario.ctx());
@@ -82,7 +80,7 @@ public fun play_cap_and_proofs_ok() {
 public fun incorrect_bm_cap_1() {
     let addr = @0xA;
     let mut scenario = begin(addr);
-    
+
     let (mut balance_manager1, balance_manager_cap1) = balance_manager::new(scenario.ctx());
     let (mut _balance_manager2, balance_manager_cap2) = balance_manager::new(scenario.ctx());
 
@@ -98,25 +96,29 @@ public fun incorrect_bm_cap_1() {
 public fun incorrect_bm_cap_2() {
     let addr = @0xA;
     let mut scenario = begin(addr);
-    
+
     let (mut balance_manager1, balance_manager_cap1) = balance_manager::new(scenario.ctx());
     let (mut _balance_manager2, balance_manager_cap2) = balance_manager::new(scenario.ctx());
 
     // Ok
-    let _play_proof1 = balance_manager1.generate_proof_as_owner(&balance_manager_cap1, scenario.ctx());
+    let _play_proof1 = balance_manager1.generate_proof_as_owner(
+        &balance_manager_cap1,
+        scenario.ctx(),
+    );
     // Invalid cap
-    let _play_proof2 = balance_manager1.generate_proof_as_owner(&balance_manager_cap2, scenario.ctx());
+    let _play_proof2 = balance_manager1.generate_proof_as_owner(
+        &balance_manager_cap2,
+        scenario.ctx(),
+    );
 
     abort 0
 }
-
-
 
 #[test, expected_failure(abort_code = balance_manager::EInvalidPlayer)]
 public fun incorrect_play_cap() {
     let addr = @0xA;
     let mut scenario = begin(addr);
-    
+
     let (mut balance_manager1, balance_manager_cap1) = balance_manager::new(scenario.ctx());
     let (mut balance_manager2, balance_manager_cap2) = balance_manager::new(scenario.ctx());
 
@@ -135,7 +137,7 @@ public fun incorrect_play_cap() {
 public fun revoked_play_cap() {
     let addr = @0xA;
     let mut scenario = begin(addr);
-    
+
     let (mut balance_manager, balance_manager_cap) = balance_manager::new(scenario.ctx());
 
     let play_cap = balance_manager.mint_play_cap(&balance_manager_cap, scenario.ctx());

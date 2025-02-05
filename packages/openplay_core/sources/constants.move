@@ -4,6 +4,7 @@ use std::string::{String, utf8};
 
 // === Constant ===
 const PRECISION_ERROR_ALLOWANCE: u64 = 2;
+const CURRENT_VERSION: u64 = 1;
 
 // === Public-View Functions ===
 public fun precision_error_allowance(): u64 {
@@ -20,4 +21,8 @@ public fun tx_type_bet(): String {
 
 public fun tx_type_win(): String {
     utf8(b"Win")
+}
+
+public fun current_version(): u64 {
+    CURRENT_VERSION
 }

@@ -1,5 +1,5 @@
 #[test_only]
-module openplay_coin_flip::backend_tests;
+module openplay_coin_flip::game_tests;
 
 use openplay_coin_flip::constants::{
     place_bet_action,
@@ -12,7 +12,6 @@ use openplay_coin_flip::game::{Self, new_interact, get_admin_cap_for_testing};
 use openplay_coin_flip::test_utils::default_game;
 use openplay_core::balance_manager;
 use openplay_core::core_test_utils::create_and_fix_random;
-use openplay_core::house;
 use openplay_core::transaction::{bet, win};
 use sui::random::Random;
 use sui::test_scenario::{begin, return_shared};
@@ -56,6 +55,7 @@ public fun success_win_flow() {
     destroy(balance_manager_cap);
     destroy(admin_cap);
     destroy(house);
+
     return_shared(rand);
     scenario.end();
 }
@@ -98,6 +98,7 @@ public fun success_lose_flow() {
     destroy(balance_manager_cap);
     destroy(admin_cap);
     destroy(house);
+
     return_shared(rand);
     scenario.end();
 }
@@ -114,11 +115,9 @@ public fun success_house_bias_flow() {
 
     // Create a coinflip backend
     let coin_flip_cap = get_admin_cap_for_testing(scenario.ctx());
-    let (mut house, house_admin_cap) = house::new(false, 10_000_000, 50, 50, scenario.ctx());
-    let tx_cap = house.admin_mint_tx_cap(&house_admin_cap, scenario.ctx());
     let mut game = game::admin_create(
         &coin_flip_cap,
-        tx_cap,
+        0,
         10_000_000,
         9_999,
         20_000,
@@ -148,8 +147,6 @@ public fun success_house_bias_flow() {
     destroy(game);
     destroy(balance_manager);
     destroy(balance_manager_cap);
-    destroy(house_admin_cap);
-    destroy(house);
     destroy(coin_flip_cap);
     return_shared(rand);
     scenario.end();

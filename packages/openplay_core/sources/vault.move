@@ -1,5 +1,5 @@
-/// The vault holds all of the assets of a game. At the end of all
-/// transaction processing, the vault is used to settle the balances for the user.
+/// The vault holds all of the assets of a house. At the end of all
+/// transaction processing, the vault is used to settle the balances for the account.
 /// The vault is also responsible for taking a fee when processing transactions
 module openplay_core::vault;
 
@@ -8,10 +8,10 @@ use openplay_core::constants::precision_error_allowance;
 use sui::balance::{Self, Balance};
 use sui::sui::SUI;
 use sui::vec_map::{Self, VecMap};
+use sui::event::emit;
 
 // === Errors ===
 const EInsufficientFunds: u64 = 1;
-const EVaultNotActive: u64 = 2;
 const EReferralDoesNotExist: u64 = 3;
 
 // === Structs ===
@@ -22,7 +22,14 @@ public struct Vault has store {
     collected_referral_fees: VecMap<ID, Balance<SUI>>,
     play_balance: Balance<SUI>,
     reserve_balance: Balance<SUI>,
-    active: bool, // A boolean indicating whether the vault has been activated by stake, and the play_balance funded
+}
+
+public struct PlayBalanceFundedEvent has copy, drop {
+    amount: u64
+}
+
+public struct PlayBalanceClearedEvent has copy, drop {
+    amount: u64
 }
 
 // === Public-View Functions ---
@@ -51,10 +58,6 @@ public fun epoch(self: &Vault): u64 {
     self.epoch
 }
 
-public fun active(self: &Vault): bool {
-    self.active
-}
-
 // === Public-Package Functions ===
 
 /// Creates an empty vault, with all balances initialized to zero and the epoch set to the current epoch.
@@ -66,38 +69,45 @@ public(package) fun empty(ctx: &TxContext): Vault {
         collected_house_fees: balance::zero(),
         play_balance: balance::zero(),
         reserve_balance: balance::zero(),
-        active: false,
     }
 }
 
-/// Processes the end of day for the vault, if applicable.
+/// If there is an epoch switch, the end of day is processed. The playable balance is joined back into the reserves, and the last
+/// playable balance, which we call the end of day balance, is returned. Current vault epoch is updated.
 /// returns (epoch_switched, prev_epoch, end_of_day_balance, was_active)
 /// - `epoch_switched` is true if there was a new epoch, and the end of day was processed.
 /// - `prev_epoch` will be 0 if there was no epoch switch, and the old epoch number otherwise.
 /// - `end_of_day_balance` will be 0 if there was no epoch swith, and the last `play_balance` otherwise.
-/// - `was_active` will be false if there was no epoch switch, and the vault activation state otherwise. This
-/// says if the vault was activated in the previous epoch.
-public(package) fun process_end_of_day(self: &mut Vault, ctx: &TxContext): (bool, u64, u64, bool) {
-    if (self.epoch == ctx.epoch()) return (false, 0, 0, false);
+public(package) fun process_end_of_day(self: &mut Vault, ctx: &TxContext): (bool, u64, u64) {
+    if (self.epoch == ctx.epoch()) return (false, 0, 0);
     let prev_epoch = self.epoch;
     let end_of_day_balance = self.play_balance.value();
-    let was_active = self.active;
 
     // Move the house funds back to the reserve
     let leftover_balance = self.play_balance.withdraw_all();
+    let amount_cleared = leftover_balance.value();
     self.reserve_balance.join(leftover_balance);
-    self.active = false;
-
     self.epoch = ctx.epoch();
-    return (true, prev_epoch, end_of_day_balance, was_active)
+
+    // Event
+    emit(PlayBalanceClearedEvent {
+        amount: amount_cleared
+    });
+
+    return (true, prev_epoch, end_of_day_balance)
 }
 
-/// Activates the vault. This will set `active` to true, and fund the `play_balance` to the target_balance.
-public(package) fun activate(self: &mut Vault, target_balance: u64) {
+/// Funds the `play_balance` to the target_balance.
+/// Fails if the reserve does not have enough funds
+public(package) fun fund_play_balance(self: &mut Vault, target_balance: u64) {
     assert!(self.reserve_balance.value() >= target_balance, EInsufficientFunds);
     let fresh_play_balance = self.reserve_balance.split(target_balance);
     self.play_balance.join(fresh_play_balance);
-    self.active = true;
+
+    // Event
+    emit(PlayBalanceFundedEvent {
+        amount: target_balance
+    });
 }
 
 public(package) fun deposit(self: &mut Vault, stake: Balance<SUI>) {
@@ -126,6 +136,7 @@ public(package) fun withdraw_protocol_fees(self: &mut Vault): Balance<SUI> {
 /// Settles the balances between the `vault` and `balance_manager`.
 /// For `amount_in`, balances are withdrawn from the `balance_manager` and joined with the `play_balance`.
 /// For `amount_out`, balances are split from the `play_balance` and deposited into `balance_manager`.
+/// Fails if the balance_manager funds are lower than the amount_in for safety reasons.
 public(package) fun settle_balance_manager(
     self: &mut Vault,
     amount_out: u64,
@@ -133,7 +144,6 @@ public(package) fun settle_balance_manager(
     balance_manager: &mut BalanceManager,
     play_proof: &PlayProof,
 ) {
-    assert!(self.active, EVaultNotActive);
     // No matter what, the balance manager should have sufficient funds to cover the debits
     balance_manager.ensure_sufficient_funds(amount_in);
     if (amount_out > amount_in) {
@@ -172,17 +182,8 @@ public(package) fun process_house_fee(self: &mut Vault, house_fee: u64) {
     };
 }
 
-public(package) fun process_house_fee_with_referral(
-    self: &mut Vault,
-    house_fee: u64,
-    referral_id: ID,
-    referral_fee: u64,
-) {
-    assert!(self.play_balance.value() >= referral_fee + house_fee, EInsufficientFunds);
-    if (house_fee > 0) {
-        let balance = self.play_balance.split(house_fee);
-        self.collected_house_fees.join(balance);
-    };
+public(package) fun process_referral_fee(self: &mut Vault, referral_id: ID, referral_fee: u64) {
+    assert!(self.play_balance.value() >= referral_fee, EInsufficientFunds);
     if (referral_fee > 0) {
         self.ensure_referral_fee_balance(referral_id);
         let balance = self.play_balance.split(referral_fee);

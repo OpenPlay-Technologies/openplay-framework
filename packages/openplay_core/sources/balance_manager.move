@@ -26,7 +26,7 @@ public struct BalanceManager has key {
     id: UID,
     balance: Balance<SUI>,
     tx_allow_listed: VecSet<ID>,
-    cap_id: ID
+    cap_id: ID,
 }
 
 public struct BalanceManagerCap has key, store {
@@ -47,11 +47,29 @@ public struct PlayProof has drop {
     player: address,
 }
 
-/// Event emitted when a deposit or withdrawal occurs.
-public struct BalanceEvent has copy, drop {
+public struct BalanceManagerCreatedEvent has copy, drop {
+    balance_manager_id: ID,
+    balance_manager_cap_id: ID
+}
+
+public struct DepositCompletedEvent has copy, drop {
     balance_manager_id: ID,
     amount: u64,
-    deposit: bool,
+}
+
+public struct WithdrawalProcessedEvent has copy, drop {
+    balance_manager_id: ID,
+    amount: u64,
+}
+
+public struct PlayCapMintedEvent has copy, drop {
+    balance_manager_id: ID,
+    play_cap_id: ID,
+}
+
+public struct PlayCapRevokedEvent has copy, drop {
+    balance_manager_id: ID,
+    play_cap_id: ID,
 }
 
 // === Public-View Functions ===
@@ -89,13 +107,18 @@ public fun new(ctx: &mut TxContext): (BalanceManager, BalanceManagerCap) {
         id: object::new(ctx),
         balance: balance::zero(),
         tx_allow_listed: vec_set::empty(),
-        cap_id: cap_id.to_inner()
+        cap_id: cap_id.to_inner(),
     };
 
     let balance_manager_cap = BalanceManagerCap {
         id: cap_id,
         balance_manager_id: balance_manager.id(),
     };
+
+    emit(BalanceManagerCreatedEvent {
+        balance_manager_id: balance_manager.id(),
+        balance_manager_cap_id: balance_manager_cap.id.to_inner()
+    });
 
     (balance_manager, balance_manager_cap)
 }
@@ -116,6 +139,11 @@ public fun mint_play_cap(
     let id = object::new(ctx);
     self.tx_allow_listed.insert(id.to_inner());
 
+    emit(PlayCapMintedEvent {
+        balance_manager_id: self.id(),
+        play_cap_id: id.to_inner()
+    });
+
     PlayCap {
         id,
         balance_manager_id: self.id(),
@@ -128,6 +156,11 @@ public fun revoke_play_cap(self: &mut BalanceManager, cap: &BalanceManagerCap, p
 
     assert!(self.tx_allow_listed.contains(player_cap_id), EPlayCapNotInList);
     self.tx_allow_listed.remove(player_cap_id);
+
+    emit(PlayCapRevokedEvent {
+        balance_manager_id: self.id(),
+        play_cap_id: *player_cap_id
+    });
 }
 
 /// Generate a `PlayProof` by the owner.
@@ -168,10 +201,9 @@ public fun deposit(
 ) {
     let proof = generate_proof_as_owner(self, cap, ctx);
 
-    emit(BalanceEvent {
+    emit(DepositCompletedEvent {
         balance_manager_id: self.id(),
         amount: to_deposit.value(),
-        deposit: true,
     });
 
     deposit_with_proof(self, &proof, to_deposit.into_balance());
@@ -186,12 +218,10 @@ public fun withdraw(
 ): Coin<SUI> {
     let proof = generate_proof_as_owner(self, cap, ctx);
 
-    emit(BalanceEvent {
+    emit(WithdrawalProcessedEvent {
         balance_manager_id: self.id(),
         amount: withdraw_amount,
-        deposit: false,
     });
-
     withdraw_with_proof(self, &proof, withdraw_amount).into_coin(ctx)
 }
 

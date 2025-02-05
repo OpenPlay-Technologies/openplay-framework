@@ -16,13 +16,13 @@ public fun version_disabled() {
     let coin_flip_cap = get_admin_cap_for_testing(scenario.ctx());
 
     // Ok
-    game.house_id();
+    game.max_stake();
 
     // Disallow current version
     game.admin_disallow_version(&coin_flip_cap, current_version());
 
     // Not ok
-    game.house_id();
+    game.max_stake();
     abort 0
 }
 

@@ -2,7 +2,7 @@
 module openplay_core::core_test_utils;
 
 use openplay_core::constants::precision_error_allowance;
-use openplay_core::house::{Self, House, HouseAdminCap, HouseTransactionCap};
+use openplay_core::house::{Self, House, HouseAdminCap};
 use openplay_core::participation::Participation;
 use sui::coin::mint_for_testing;
 use sui::random::{Random, create_for_testing};
@@ -10,8 +10,6 @@ use sui::sui::SUI;
 use sui::test_scenario::{begin, return_shared};
 
 public fun assert_eq_within_precision_allowance(a: u64, b: u64) {
-    // std::debug::print(&a);
-    // std::debug::print(&b);
     if (a >= b) {
         assert!(a - b <= precision_error_allowance())
     };
@@ -51,8 +49,7 @@ public fun fund_house_for_playing(
     participation
 }
 
-public fun default_house(ctx: &mut TxContext) : (House, HouseAdminCap, HouseTransactionCap){
-    let (mut house, house_admin) = house::new( false, 100_000, 99, 69, ctx);
-    let tx_cap = house.admin_mint_tx_cap(&house_admin, ctx);
-    (house, house_admin, tx_cap)
+public fun default_house(ctx: &mut TxContext): (House, HouseAdminCap) {
+    let (house, house_admin) = house::new(false, 100_000, 99, 69, ctx);
+    (house, house_admin)
 }

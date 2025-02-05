@@ -1,0 +1,28 @@
+== DEFINITIONS ==
+
+1) participation
+
+- stake: the stake that is currently activated for your participation, this can be part of an active house or not, depending on the house state.
+- pending stake: stake that needs to wait until the end of the epoch to be activated.
+
+When you stake in a participation, we should check if the house is currently active or not. If the house is inactive, we don't care, and it can be immediately added to the stake. If the house is active, we can't just add it because it would interfere with the current's epoch profit/loss distribution. Therefore, the stake is pending until the end of the epoch, and then added to your stake balance.
+
+2) vault
+
+- reserve balance: the balance where all the funds are held by default. All stakes end up in here.
+- play balance: the balance that is used by gameplay. Bets and wins are added and taken from this balance. If the play balance runs out of money, it's not possible to play until the next rebalance event.
+
+When users stake their money, it is first added in the reserve balance. When the house is activated, it transfers the funds (target balance) from the reserve balance to the play balance. This can be used for gameplay. At the end of the epoch, there is once again a rebalance event, and the profits/losses for the previous epoch are calculated. The remaining play balance is moved to the reserve balance once again. Only if the reserve balance contains sufficient founds, the house is activated again and the target balance is moved to the play balance.
+
+3) house
+
+- inactive stake: all stakes are first added to the inactive stake balance. Only when there is enough stake in the house, then the house is activated and this inactive stake becomes active.
+- active stake: stake that is currently active. This is the case when the house is active. Active stake is the amount of stake that was activated.
+- pending unstake: stake that is currently waiting to be unstaked. This comes from users that have active stake but wish to exit the position. At the end of the epoch, this balance is cleared.
+
+The idea here is that inactive stake is the base state. So all stakes go to the inactive stake by default. Then, when the house is activated, the stake is moved from the inactive balance to the active balance. At this point, all new stakes that are added during the cycle will be added to the inactive stake. It is not possible to change the active stake anymore once the cycle has started.
+When you are unstaking, it's really easy. Either the house is active, and the funds are immediately removed from the inactive stake. Otherwise, the amount is added to the pending unstake balance. At the end of the cycle, the amount is indexed with the profits/losses, and then removed from the inactive stake.
+
+== Invariants ==
+
+The sums of each of these states should always be the same. The money can not just disappear!

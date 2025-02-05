@@ -48,7 +48,7 @@ public fun deposit_withdraw_ok() {
 }
 
 #[test]
-public fun activate_ok() { let addr = @0xA; let mut scenario = begin(addr); {
+public fun fund_play_balance_ok() { let addr = @0xA; let mut scenario = begin(addr); {
         // Initialize balance manager with 100 MIST
 
         // Create empty vault
@@ -60,10 +60,10 @@ public fun activate_ok() { let addr = @0xA; let mut scenario = begin(addr); {
         vault.deposit(deposit_balance);
         assert!(vault.reserve_balance() == 100);
 
-        // Activate game
-        vault.activate(50);
-        assert!(vault.play_balance() == 50);
-        assert!(vault.reserve_balance() == 50);
+        // Fund play balance to 40
+        vault.fund_play_balance(40);
+        assert!(vault.play_balance() == 40);
+        assert!(vault.reserve_balance() == 60);
 
         destroy(vault);
     }; scenario.end(); }
@@ -80,7 +80,7 @@ public fun activate_not_enough_funds() { let addr = @0xA; let mut scenario = beg
         assert!(vault.reserve_balance() == 100);
 
         // Activate game
-        vault.activate(150);
+        vault.fund_play_balance(150);
         abort 0
     } }
 
@@ -94,7 +94,7 @@ public fun settle_balance_manager_gameplay_ok() { let addr = @0xA; let mut scena
 
         // Create empty vault
         let mut vault = vault::empty(scenario.ctx());
-        vault.activate(0);
+        vault.fund_play_balance(0);
         assert!(vault.play_balance() == 0);
 
         // Settle balance for 20 MIST from balance manager to vault
@@ -131,7 +131,7 @@ public fun settle_balance_manager_insufficient_funds_bm() {
         // Create empty vault
         let mut vault = vault::empty(scenario.ctx());
         assert!(vault.play_balance() == 0);
-        vault.activate(0);
+        vault.fund_play_balance(0);
 
         // Try to move 101 MIST from bm to vault
         vault.settle_balance_manager(0, 101, &mut balance_manager, &proof);
@@ -150,7 +150,7 @@ public fun settle_balance_manager_insufficient_funds_vault() {
 
         // Create empty vault
         let mut vault = vault::empty(scenario.ctx());
-        vault.activate(0);
+        vault.fund_play_balance(0);
         assert!(vault.play_balance() == 0);
 
         // Try to move 5 MIST from vaul to bm
@@ -171,16 +171,22 @@ public fun process_fees_ok() {
         let (referral, referral_cap) = referral::new(object::id_from_address(@0xA), scenario.ctx());
 
         // Process fees (both)
-        vault.process_house_fee_with_referral(5, referral.id(), 5);
-        assert!(vault.play_balance() == 90);
-        assert!(vault.collected_referral_fees(referral.id()) == 5);
+        vault.process_house_fee(5);
+        vault.process_referral_fee(referral.id(), 6);
+        vault.process_protocol_fee(7);
+
+        assert!(vault.play_balance() == 82);
+        assert!(vault.collected_referral_fees(referral.id()) == 6);
         assert!(vault.collected_house_fees() == 5);
+        assert!(vault.collected_protocol_fees() == 7);
 
         // Process fees (just game)
         vault.process_house_fee(10);
-        assert!(vault.play_balance() == 80);
-        assert!(vault.collected_referral_fees(referral.id()) == 5);
+
+        assert!(vault.play_balance() == 72);
+        assert!(vault.collected_referral_fees(referral.id()) == 6);
         assert!(vault.collected_house_fees() == 15);
+        assert!(vault.collected_protocol_fees() == 7);
 
         destroy(vault);
         destroy(referral);
@@ -199,14 +205,50 @@ public fun process_protocol_fees_fail() {
         vault.fund_play_balance_for_testing(100, scenario.ctx());
 
         // Process fees
+        vault.process_protocol_fee(101);
+        destroy(vault);
+        abort 0
+    }
+}
+
+#[test, expected_failure(abort_code = vault::EInsufficientFunds)]
+public fun process_house_fees_fail() {
+    let addr = @0xA;
+    let mut scenario = begin(addr);
+    {
+        // Create and fund vault with 100 MIST
+        let mut vault = vault::empty(scenario.ctx());
+        vault.fund_play_balance_for_testing(100, scenario.ctx());
+
+        // Process fees
         vault.process_house_fee(101);
         destroy(vault);
         abort 0
     }
 }
 
+#[test, expected_failure(abort_code = vault::EInsufficientFunds)]
+public fun process_referral_fees_fail() {
+    let addr = @0xA;
+    let mut scenario = begin(addr);
+    {
+        // Create and fund vault with 100 MIST
+        let mut vault = vault::empty(scenario.ctx());
+        vault.fund_play_balance_for_testing(100, scenario.ctx());
+        let (referral, _referral_cap) = referral::new(
+            object::id_from_address(@0xA),
+            scenario.ctx(),
+        );
+
+        // Process fees
+        vault.process_referral_fee(referral.id(), 101);
+        destroy(vault);
+        abort 0
+    }
+}
+
 #[test]
-public fun update_epoch() {
+public fun end_of_day_ok() {
     let addr = @0xA;
     let target_balance = 100;
     let mut scenario = begin(addr);
@@ -219,21 +261,17 @@ public fun update_epoch() {
 
         // Advance epoch (enough funding)
         scenario.next_epoch(addr);
-        let (
-            epoch_switch,
-            prev_epoch,
-            end_balance,
-            play_balance_funded,
-        ) = vault.process_end_of_day(scenario.ctx());
+        let (epoch_switch, prev_epoch, end_balance) = vault.process_end_of_day(scenario.ctx());
+
         assert!(epoch_switch);
         assert!(prev_epoch == 0);
         assert!(end_balance == 0);
-        assert!(play_balance_funded == false); // The previous epoch was not funded, only the new (current) one is
         assert!(vault.epoch() == scenario.ctx().epoch());
         assert!(vault.reserve_balance() == 150); // everything is in reserve because game is not activated
         assert!(vault.play_balance() == 0); // Game is not funded yet
+
         // Activate vault
-        vault.activate(target_balance);
+        vault.fund_play_balance(target_balance);
         assert!(vault.reserve_balance() == 50); // 50 is left in reserve
         assert!(vault.play_balance() == 100); // Game is funded now
 
@@ -244,31 +282,22 @@ public fun update_epoch() {
         assert!(vault.reserve_balance() == 50); // the same
 
         // Update vault without advancing epoch, this should have no effect
-        let (
-            epoch_switch,
-            _prev_epoch,
-            _end_balance,
-            _play_balance_funded,
-        ) = vault.process_end_of_day(scenario.ctx());
+        let (epoch_switch, _prev_epoch, _end_balance) = vault.process_end_of_day(scenario.ctx());
         assert!(epoch_switch == false);
 
         // Advance epoch (enough funding, play_balance reset to target balance)
         scenario.next_epoch(addr);
-        let (
-            epoch_switch,
-            prev_epoch,
-            end_balance,
-            play_balance_funded,
-        ) = vault.process_end_of_day(scenario.ctx());
+        let (epoch_switch, prev_epoch, end_balance) = vault.process_end_of_day(scenario.ctx());
+
         assert!(epoch_switch);
         assert!(prev_epoch == 1);
         assert!(end_balance == 110);
-        assert!(play_balance_funded == true);
         assert!(vault.play_balance() == 0);
         assert!(vault.reserve_balance() == 160);
         assert!(vault.collected_house_fees() == 10);
+
         // Activate vault
-        vault.activate(target_balance);
+        vault.fund_play_balance(target_balance);
         assert!(vault.reserve_balance() == 60); // 60 is left in reserve
         assert!(vault.play_balance() == 100); // Game is funded again
 
@@ -280,16 +309,11 @@ public fun update_epoch() {
 
         // Advance epoch (not enough funding this time)
         scenario.next_epoch(addr);
-        let (
-            epoch_switch,
-            prev_epoch,
-            end_balance,
-            play_balance_funded,
-        ) = vault.process_end_of_day(scenario.ctx());
+        let (epoch_switch, prev_epoch, end_balance) = vault.process_end_of_day(scenario.ctx());
+
         assert!(epoch_switch);
         assert!(prev_epoch == 2);
         assert!(end_balance == 30);
-        assert!(play_balance_funded == true);
         assert!(vault.play_balance() == 0);
         assert!(vault.reserve_balance() == 90);
         assert!(vault.collected_house_fees() == 20);

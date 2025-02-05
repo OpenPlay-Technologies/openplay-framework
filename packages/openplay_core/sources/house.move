@@ -16,18 +16,20 @@ use sui::coin::Coin;
 use sui::sui::SUI;
 use sui::transfer::share_object;
 use sui::vec_set::{Self, VecSet};
+use sui::event::emit;
 
 // === Errors ===
 const EInsufficientFunds: u64 = 1;
 const EInvalidTxCap: u64 = 2;
 const EInvalidParticipation: u64 = 3;
-const EVaultNotActive: u64 = 4;
+const EHouseNotActive: u64 = 4;
 const EReferralNotEnabled: u64 = 5;
 const EHouseIsPrivate: u64 = 6;
 const EMaxTxCapsReached: u64 = 7;
-const EPlayCapNotInList: u64 = 8;
 const EInvalidAdminCap: u64 = 9;
 const EInvalidFeeConfiguration: u64 = 10;
+const EUnauthorizedGameId: u64 = 11;
+const ETxCapNotAllowed: u64 = 12;
 
 // === Constants ===
 const MAX_TX_CAPS: u64 = 1000;
@@ -56,9 +58,55 @@ public struct HouseAdminCap has key, store {
 }
 
 /// The cap that is used to execute transaction.
-public struct HouseTransactionCap has key, store {
-    id: UID,
+public struct HouseTransactionCap {
     house_id: ID,
+    game_id: ID,
+}
+
+public struct Fees has copy, drop {
+    protocol_fee: u64,
+    house_fee: u64,
+    referral_fee: u64,
+}
+
+public struct HouseCreatedEvent has copy,drop {
+    house_id: ID,
+    admin_cap_id: ID
+}
+
+public struct TransactionsProcessedEvent has copy, drop {
+    house_id: ID,
+    game_id: ID,
+    balance_manager_id: ID,
+    referral_id: Option<ID>,
+    transactions: vector<Transaction>,
+    fees: Fees
+}
+
+public struct GameTransactionsAllowedEvent has copy, drop {
+    house_id: ID,
+    game_id: ID
+}
+
+public struct GameTransactionsRevokedEvent has copy, drop {
+    house_id: ID,
+    game_id: ID
+}
+
+public struct ProtocolFeesClaimedEvent has copy, drop {
+    house_id: ID,
+    amount: u64
+}
+
+public struct ReferralFeesClaimedEvent has copy, drop {
+    house_id: ID,
+    referral_id: ID,
+    amount: u64
+}
+
+public struct HouseFeesClaimedEvent has copy, drop {
+    house_id: ID,
+    amount: u64
 }
 
 // === Public-View Functions ===
@@ -75,6 +123,11 @@ public fun play_balance(self: &mut House, ctx: &mut TxContext): u64 {
     self.vault.play_balance()
 }
 
+public fun reserve_balance(self: &mut House, ctx: &mut TxContext): u64 {
+    self.process_end_of_day(ctx);
+    self.vault.reserve_balance()
+}
+
 public fun referral_fee_factor(self: &House): UQ32_32 {
     from_quotient(self.referral_fee_bps, 10000)
 }
@@ -89,6 +142,12 @@ public fun admin_cap_house_id(cap: &HouseAdminCap): ID {
 
 public fun transaction_cap_house_id(cap: &HouseTransactionCap): ID {
     cap.house_id
+}
+
+public fun is_active(self: &mut House, ctx: &TxContext): bool {
+    // Make sure the vault and participation are up to date (end of day is processed for previous days)
+    self.process_end_of_day(ctx);
+    self.state.is_active()
 }
 
 // === Public-Mutative Functions ===
@@ -122,6 +181,11 @@ public fun new(
         house_id: house.id(),
     };
 
+    emit(HouseCreatedEvent {
+        house_id: house.id(),
+        admin_cap_id: admin_cap.id.to_inner()
+    });
+
     (house, admin_cap)
 }
 
@@ -135,7 +199,7 @@ public fun ensure_sufficient_funds(self: &mut House, amount: u64, ctx: &TxContex
     // Make sure the vault and participation are up to date (end of day is processed for previous days)
     self.process_end_of_day(ctx);
 
-    assert!(self.vault.active(), EVaultNotActive);
+    assert!(self.state.is_active(), EHouseNotActive);
     assert!(self.vault.play_balance() >= amount, EInsufficientFunds)
 }
 
@@ -158,14 +222,17 @@ public fun stake(
     // Make sure the vault and participation are up to date (end of day is processed for previous days)
     self.process_end_of_day(ctx);
 
-    // Process the stake in the history
-    self.state.process_stake(stake.value());
+    // Process the stake in the state
+    self.state.process_stake(stake.value(), ctx);
 
     // Add funds to the participation
-    participation.add_inactive_stake(stake.value(), ctx);
+    participation.add_stake(stake.value(), self.state.is_active(), ctx);
 
     // Move funds to the vault
     self.vault.deposit(stake.into_balance());
+
+    // Try to activate the house
+    self.activate_if_possible(ctx);
 }
 
 /// Refreshes the participation to process any unprocessed profits or losses.
@@ -191,10 +258,10 @@ public fun unstake(self: &mut House, participation: &mut Participation, ctx: &mu
     self.process_end_of_day(ctx);
 
     // Unstake the funds in the participation
-    let (unstake_immediately, pending_unstake) = participation.unstake(ctx);
+    let (prev_stake, pending_stake_removed) = participation.unstake(self.state.is_active(), ctx);
 
     // Process the unstake in the history
-    self.state.process_unstake(unstake_immediately, pending_unstake);
+    self.state.process_unstake(prev_stake, pending_stake_removed, ctx);
 }
 
 public fun claim_all(
@@ -221,11 +288,19 @@ public fun new_referral(self: &House, ctx: &mut TxContext): ReferralCap {
     referral_cap
 }
 
+public fun borrow_tx_cap(self: &House, game_id: &mut UID): HouseTransactionCap {
+    assert!(self.tx_allow_listed.contains(game_id.as_inner()), EUnauthorizedGameId);
+    HouseTransactionCap {
+        house_id: self.id(),
+        game_id: game_id.to_inner(),
+    }
+}
+
 // === Tx-Admin Functions ===
 public fun tx_admin_process_transactions_with_referral(
     self: &mut House,
     registry: &Registry,
-    cap: &HouseTransactionCap,
+    cap: HouseTransactionCap,
     balance_manager: &mut BalanceManager,
     transactions: &vector<Transaction>,
     play_cap: &PlayCap,
@@ -233,6 +308,7 @@ public fun tx_admin_process_transactions_with_referral(
     ctx: &TxContext,
 ) {
     // Check the tx cap
+    let game_id = cap.game_id;
     self.assert_valid_tx_cap(cap);
 
     // Generate proof
@@ -257,26 +333,43 @@ public fun tx_admin_process_transactions_with_referral(
             house_fee_factor,
             protocol_fee_factor,
             some(referral_fee_factor),
+            ctx,
         );
 
     // Settle the balances in vault
     self.vault.settle_balance_manager(credit_balance, debit_balance, balance_manager, &play_proof);
 
     // Process fees
-    self.vault.process_house_fee_with_referral(house_fee, referral.id(), referral_fee);
+    self.vault.process_house_fee(house_fee);
+    self.vault.process_referral_fee(referral.id(), referral_fee);
     self.vault.process_protocol_fee(protocol_fee);
+
+    // Event
+    emit(TransactionsProcessedEvent {
+        house_id: self.id(),
+        game_id: game_id,
+        balance_manager_id: balance_manager.id(),
+        referral_id: some(referral.id()),
+        transactions: *transactions,
+        fees: Fees {
+            protocol_fee: protocol_fee,
+            house_fee: house_fee,
+            referral_fee: referral_fee,
+        }
+    })
 }
 
 public fun tx_admin_process_transactions(
     self: &mut House,
     registry: &Registry,
-    cap: &HouseTransactionCap,
+    cap: HouseTransactionCap,
     balance_manager: &mut BalanceManager,
     transactions: &vector<Transaction>,
     play_cap: &PlayCap,
     ctx: &TxContext,
 ) {
     // Check the tx cap
+    let game_id = cap.game_id;
     self.assert_valid_tx_cap(cap);
 
     // Generate proof
@@ -296,6 +389,7 @@ public fun tx_admin_process_transactions(
             house_fee_factor,
             protocol_fee_factor,
             none(),
+            ctx,
         );
 
     // Settle the balances in vault
@@ -304,6 +398,20 @@ public fun tx_admin_process_transactions(
     // Process fees
     self.vault.process_house_fee(house_fee);
     self.vault.process_protocol_fee(protocol_fee);
+
+    // Event
+    emit(TransactionsProcessedEvent {
+        house_id: self.id(),
+        game_id: game_id,
+        balance_manager_id: balance_manager.id(),
+        referral_id: none(),
+        transactions: *transactions,
+        fees: Fees {
+            protocol_fee: protocol_fee,
+            house_fee: house_fee,
+            referral_fee: 0,
+        }
+    })
 }
 
 // === House-Admin Functions ===
@@ -326,37 +434,47 @@ public fun admin_claim_house_fees(
     ctx: &mut TxContext,
 ): Coin<SUI> {
     self.assert_valid_admin_cap(admin_cap);
-    self.vault.withdraw_house_fees().into_coin(ctx)
+    let fee_coin = self.vault.withdraw_house_fees().into_coin(ctx);
+
+    // Event
+    emit(HouseFeesClaimedEvent {
+        house_id: self.id(),
+        amount: fee_coin.value()
+    });
+
+    fee_coin
 }
 
-/// Mint a transaction cap as the house admin. With this tx cap, you are allowed to call admin functions to process transactions.
-public fun admin_mint_tx_cap(
-    self: &mut House,
-    admin_cap: &HouseAdminCap,
-    ctx: &mut TxContext,
-): HouseTransactionCap {
+/// Adds a `game_id` to the tx allowed list.
+public fun admin_add_tx_allowed(self: &mut House, admin_cap: &HouseAdminCap, game_id: ID) {
     // Check if the admin_cap is valid
     self.assert_valid_admin_cap(admin_cap);
 
     // Check if the max allow listed is reached
     assert!(self.tx_allow_listed.size() < MAX_TX_CAPS, EMaxTxCapsReached);
 
-    let tx_cap_id = object::new(ctx);
-    self.tx_allow_listed.insert(tx_cap_id.to_inner());
+    self.tx_allow_listed.insert(game_id);
 
-    HouseTransactionCap {
-        id: tx_cap_id,
+    // Event
+    emit(GameTransactionsAllowedEvent {
         house_id: self.id(),
-    }
+        game_id: game_id
+    })
 }
 
-/// Revoke a `HouseTransactionCap`. Only the House Admin can revoke a `HouseTransactionCap`.
-public fun admin_revoke_tx_cap(self: &mut House, admin_cap: &HouseAdminCap, tx_cap_id: &ID) {
+/// Revokes tx access for the provided `game_id`.
+public fun admin_revoke_tx_allowed(self: &mut House, admin_cap: &HouseAdminCap, game_id: &ID) {
     // Check if the admin_cap is valid
     self.assert_valid_admin_cap(admin_cap);
 
-    assert!(self.tx_allow_listed.contains(tx_cap_id), EPlayCapNotInList);
-    self.tx_allow_listed.remove(tx_cap_id);
+    assert!(self.tx_allow_listed.contains(game_id), ETxCapNotAllowed);
+    self.tx_allow_listed.remove(game_id);
+
+    // Event
+    emit(GameTransactionsRevokedEvent {
+        house_id: self.id(),
+        game_id: *game_id
+    })
 }
 
 // === Referral-Admin Functions ===
@@ -366,7 +484,16 @@ public fun referral_admin_claim_referral_fees(
     referral_cap: &ReferralCap,
     ctx: &mut TxContext,
 ): Coin<SUI> {
-    self.vault.withdraw_referral_fees(referral_cap.referral_id()).into_coin(ctx)
+    let fee_coin = self.vault.withdraw_referral_fees(referral_cap.referral_id()).into_coin(ctx);
+
+    // Event
+    emit(ReferralFeesClaimedEvent {
+        house_id: self.id(),
+        referral_id: referral_cap.referral_id(),
+        amount: fee_coin.value()
+    });
+
+    fee_coin
 }
 
 // === Openplay admin functions ===
@@ -376,7 +503,15 @@ public fun openplay_admin_claim_protocol_fees(
     _admin_cap: &OpenPlayAdminCap,
     ctx: &mut TxContext,
 ): Coin<SUI> {
-    self.vault.withdraw_protocol_fees().into_coin(ctx)
+    let fee_coin = self.vault.withdraw_protocol_fees().into_coin(ctx);
+
+    // Event
+    emit(ProtocolFeesClaimedEvent {
+        house_id: self.id(),
+        amount: fee_coin.value()
+    });
+
+    fee_coin
 }
 
 // == Private Functions ==
@@ -384,13 +519,12 @@ public fun openplay_admin_claim_protocol_fees(
 /// The vault saves the end of day balance for the house and resets to the target balance if there are enough funds available.
 /// Note: there can be a number of epochs in between without any activity.
 fun process_end_of_day(self: &mut House, ctx: &TxContext) {
-    let (epoch_switched, prev_epoch, end_of_day_balance, was_active) = self
-        .vault
-        .process_end_of_day(ctx);
+    let (epoch_switched, prev_epoch, end_of_day_balance) = self.vault.process_end_of_day(ctx);
 
     if (epoch_switched) {
         let profits: u64;
         let losses: u64;
+        let was_active = self.state.epoch_active(prev_epoch);
         if (was_active) {
             if (end_of_day_balance > self.target_balance) {
                 profits = end_of_day_balance - self.target_balance;
@@ -404,10 +538,11 @@ fun process_end_of_day(self: &mut House, ctx: &TxContext) {
             profits = 0;
             losses = 0;
         };
-        let new_stake_amount = self.state.process_end_of_day(prev_epoch, profits, losses, ctx);
-        if (new_stake_amount >= self.target_balance) {
-            self.vault.activate(self.target_balance);
-        };
+        // Process the profits / losses with the state
+        self.state.process_end_of_day(prev_epoch, profits, losses, ctx);
+
+        // Check if the house can be activated again (if there is still sufficient stake available)
+        self.activate_if_possible(ctx);
     }
 }
 
@@ -415,8 +550,10 @@ fun assert_valid_admin_cap(self: &House, house_cap: &HouseAdminCap) {
     assert!(self.id() == house_cap.house_id, EInvalidAdminCap);
 }
 
-fun assert_valid_tx_cap(self: &House, tx_cap: &HouseTransactionCap) {
-    assert!(self.tx_allow_listed.contains(object::borrow_id(tx_cap)), EInvalidTxCap);
+fun assert_valid_tx_cap(self: &House, tx_cap: HouseTransactionCap) {
+    let HouseTransactionCap { house_id, game_id } = tx_cap;
+    assert!(self.tx_allow_listed.contains(&game_id), EInvalidTxCap);
+    assert!(self.id() == house_id, EInvalidTxCap);
 }
 
 fun assert_valid_participation(self: &House, participation: &Participation) {
@@ -431,6 +568,17 @@ fun assert_referral_active(self: &House) {
     assert!(self.referral_fee_bps > 0, EReferralNotEnabled);
 }
 
+fun activate_if_possible(self: &mut House, ctx: &TxContext) {
+    // Do nothing if the current epoch is already activated
+    if (self.state.is_active()) {
+        return
+    };
+    let activated = self.state.maybe_activate(self.target_balance, ctx);
+    if (activated) {
+        self.vault.fund_play_balance(self.target_balance);
+    }
+}
+
 // === Test Functions ===
 #[test_only]
 public fun admin_cap_for_testing(house: &House, ctx: &mut TxContext): HouseAdminCap {
@@ -440,11 +588,15 @@ public fun admin_cap_for_testing(house: &House, ctx: &mut TxContext): HouseAdmin
     }
 }
 #[test_only]
-public fun tx_cap_for_testing(house: &House, ctx: &mut TxContext): HouseTransactionCap {
-    HouseTransactionCap {
+public fun tx_cap_for_testing(house: &mut House, game_id: ID): HouseTransactionCap {
+    if (!house.tx_allow_listed.contains(&game_id)) {
+        house.tx_allow_listed.insert(game_id);
+    };
+    let cap = HouseTransactionCap {
         house_id: house.id(),
-        id: object::new(ctx),
-    }
+        game_id,
+    };
+    cap
 }
 
 #[test_only]
@@ -455,7 +607,7 @@ public fun add_referral_fees_for_testing(
     ctx: &TxContext,
 ) {
     self.process_end_of_day(ctx);
-    self.vault.process_house_fee_with_referral(0, referral.id(), referral_fee);
+    self.vault.process_referral_fee(referral.id(), referral_fee);
 }
 
 #[test_only]

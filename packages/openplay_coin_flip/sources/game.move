@@ -12,17 +12,17 @@ use openplay_coin_flip::constants::{
 use openplay_coin_flip::context::{Self, CoinFlipContext};
 use openplay_coin_flip::state::{Self, CoinFlipState};
 use openplay_core::balance_manager::{BalanceManager, PlayCap};
-use openplay_core::house::{House, HouseTransactionCap};
+use openplay_core::house::House;
 use openplay_core::referral::Referral;
 use openplay_core::registry::Registry;
 use openplay_core::transaction::{Transaction, bet, win};
 use std::string::String;
 use std::uq32_32::{UQ32_32, from_quotient, int_mul};
+use sui::event::emit;
 use sui::random::{Random, RandomGenerator};
 use sui::table::{Self, Table};
 use sui::transfer::share_object;
 use sui::vec_set::{Self, VecSet};
-use sui::event::emit;
 
 // === Errors ===
 const EUnsupportedHouseEdge: u64 = 1;
@@ -40,10 +40,10 @@ public struct GAME has drop {}
 public struct Game has key {
     id: UID,
     allowed_versions: VecSet<u64>,
+    min_stake: u64,
     max_stake: u64,
     house_edge_bps: u64, // House bias in basis points (e.g. `100` will give the house a 1% change of winning)
     payout_factor_bps: u64, // Payout factor in basis points (e.g. `20_000` will give 2x or 200% of stake)
-    house_tx_cap: HouseTransactionCap,
     contexts: Table<ID, CoinFlipContext>,
     state: CoinFlipState, // Global state specific to the CoinFLip game
 }
@@ -62,15 +62,13 @@ public enum InteractionType has copy, drop, store {
     PLACE_BET { stake: u64, prediction: String },
 }
 
-
 // === Events ===
 public struct InteractedWithGame has copy, drop {
     old_balance: u64,
     new_balance: u64,
     context: CoinFlipContext,
-    balance_manager_id: ID
+    balance_manager_id: ID,
 }
-
 
 fun init(_: GAME, ctx: &mut TxContext) {
     let admin = CoinFlipCap { id: object::new(ctx) };
@@ -103,11 +101,6 @@ public fun max_stake(self: &Game): u64 {
     self.max_stake
 }
 
-public fun house_id(self: &Game): ID {
-    self.assert_version();
-    self.house_tx_cap.transaction_cap_house_id()
-}
-
 // === Public-Mutative Functions ===
 /// Interact entry function with referral
 entry fun interact_with_referral(
@@ -124,6 +117,8 @@ entry fun interact_with_referral(
     ctx: &mut TxContext,
 ) {
     self.assert_version();
+
+    let house_tx_cap = house.borrow_tx_cap(&mut self.id);
 
     // Make sure we have enough funds in the house to play this game
     house.ensure_sufficient_funds(self.max_payout(stake), ctx);
@@ -142,7 +137,7 @@ entry fun interact_with_referral(
     let old_balance = balance_manager.balance();
     house.tx_admin_process_transactions_with_referral(
         registry,
-        &self.house_tx_cap,
+        house_tx_cap,
         balance_manager,
         &interact.transactions(),
         play_cap,
@@ -155,7 +150,8 @@ entry fun interact_with_referral(
     emit(InteractedWithGame {
         old_balance,
         new_balance,
-        context: *self.get_context(balance_manager)
+        context: *self.get_context(balance_manager),
+        balance_manager_id: balance_manager.id(),
     })
 }
 
@@ -174,6 +170,8 @@ entry fun interact(
 ) {
     self.assert_version();
 
+    let house_tx_cap = house.borrow_tx_cap(&mut self.id);
+
     // Make sure we have enough funds in the house to play this game
     house.ensure_sufficient_funds(self.max_payout(stake), ctx);
 
@@ -191,7 +189,7 @@ entry fun interact(
     let old_balance = balance_manager.balance();
     house.tx_admin_process_transactions(
         registry,
-        &self.house_tx_cap,
+        house_tx_cap,
         balance_manager,
         &interact.transactions(),
         play_cap,
@@ -203,7 +201,8 @@ entry fun interact(
     emit(InteractedWithGame {
         old_balance,
         new_balance,
-        context: *self.get_context(balance_manager)
+        context: *self.get_context(balance_manager),
+        balance_manager_id: balance_manager.id(),
     })
 }
 
@@ -214,7 +213,7 @@ public fun share(game: Game) {
 // === Admin Functions ===
 public fun admin_create(
     _cap: &CoinFlipCap,
-    tx_cap: HouseTransactionCap,
+    min_stake: u64,
     max_stake: u64,
     house_edge_bps: u64,
     payout_factor_bps: u64,
@@ -229,10 +228,10 @@ public fun admin_create(
     Game {
         id: object::new(ctx),
         allowed_versions: allowed_versions,
+        min_stake,
         max_stake,
         house_edge_bps,
         payout_factor_bps,
-        house_tx_cap: tx_cap,
         contexts: table::new(ctx),
         state: state::empty(),
     }
@@ -323,6 +322,7 @@ public(package) fun new_interact(
 fun validate_interact(self: &Game, interaction: &Interaction) {
     match (interaction.interact_type) {
         InteractionType::PLACE_BET { stake, prediction: prediction } => {
+            assert!(stake >= self.min_stake, EUnsupportedStake);
             assert!(stake < self.max_stake, EUnsupportedStake);
             assert!(
                 prediction == head_result() || prediction == tail_result(),

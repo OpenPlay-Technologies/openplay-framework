@@ -30,6 +30,7 @@ public fun success_flow_win() {
     // Create a coinflip backend
     let registry = registry_for_testing(scenario.ctx());
     let (mut game, mut house, admin_cap) = default_game(scenario.ctx());
+    house.admin_add_tx_allowed(&admin_cap, game.id());
 
     // Fund the house
     let mut participation = fund_house_for_playing(&mut house, 200_000_000, scenario.ctx());
@@ -71,7 +72,7 @@ public fun success_flow_win() {
     + int_mul(1_000, registry.protocol_fee_factor())
     + int_mul(1_000, house.house_fee_factor());
     assert_eq_within_precision_allowance(
-        participation.active_stake(),
+        participation.stake(),
         200_000_000 - 1000 - expected_fee,
     );
 
@@ -84,6 +85,7 @@ public fun success_flow_win() {
     destroy(referral);
     destroy(referral_cap);
     destroy(admin_cap);
+
     return_shared(rand);
     destroy(house);
     scenario.end();
@@ -102,6 +104,7 @@ public fun success_flow_lose() {
     // Create a coinflip backend
     let registry = registry_for_testing(scenario.ctx());
     let (mut game, mut house, admin_cap) = default_game(scenario.ctx());
+    house.admin_add_tx_allowed(&admin_cap, game.id());
 
     // Fund the house
     let mut participation = fund_house_for_playing(&mut house, 200_000_000, scenario.ctx());
@@ -143,7 +146,7 @@ public fun success_flow_lose() {
     + int_mul(1_000, registry.protocol_fee_factor())
     + int_mul(1_000, house.house_fee_factor());
     assert_eq_within_precision_allowance(
-        participation.active_stake(),
+        participation.stake(),
         200_000_000 + 1000 - expected_fee,
     );
 
@@ -156,6 +159,7 @@ public fun success_flow_lose() {
     destroy(referral_cap);
     destroy(admin_cap);
     destroy(registry);
+
     return_shared(rand);
     destroy(house);
     scenario.end();
