@@ -34,8 +34,7 @@ public fun success_win_flow() {
     let (balance_manager, balance_manager_cap) = balance_manager::new(scenario.ctx());
 
     // Internal interact
-    // Place a bet on tail for 100 MIST
-    let rand = scenario.take_shared<Random>();
+let rand = scenario.take_shared<Random>();
     let mut rand_generator = rand.new_generator(scenario.ctx());
     let mut interact = new_interact(place_bet_action(), balance_manager.id(), head_result(), 100);
     game.interact_int(&mut interact, &mut rand_generator);
@@ -77,8 +76,7 @@ public fun success_lose_flow() {
     let (balance_manager, balance_manager_cap) = balance_manager::new(scenario.ctx());
 
     // Internal interact
-    // Place a bet on tail for 100 MIST
-    let rand = scenario.take_shared<Random>();
+let rand = scenario.take_shared<Random>();
     let mut rand_generator = rand.new_generator(scenario.ctx());
     let mut interact = new_interact(place_bet_action(), balance_manager.id(), tail_result(), 100);
     game.interact_int(&mut interact, &mut rand_generator);
@@ -128,8 +126,7 @@ public fun success_house_bias_flow() {
     let (balance_manager, balance_manager_cap) = balance_manager::new(scenario.ctx());
 
     // Internal interact
-    // Place a bet on tail for 100 MIST
-    let rand = scenario.take_shared<Random>();
+let rand = scenario.take_shared<Random>();
     let mut rand_generator = rand.new_generator(scenario.ctx());
     let mut interact = new_interact(place_bet_action(), balance_manager.id(), tail_result(), 100);
     game.interact_int(&mut interact, &mut rand_generator);

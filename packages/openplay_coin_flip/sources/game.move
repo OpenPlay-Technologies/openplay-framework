@@ -323,7 +323,7 @@ fun validate_interact(self: &Game, interaction: &Interaction) {
     match (interaction.interact_type) {
         InteractionType::PLACE_BET { stake, prediction: prediction } => {
             assert!(stake >= self.min_stake, EUnsupportedStake);
-            assert!(stake < self.max_stake, EUnsupportedStake);
+            assert!(stake <= self.max_stake, EUnsupportedStake);
             assert!(
                 prediction == head_result() || prediction == tail_result(),
                 EUnsupportedPrediction,

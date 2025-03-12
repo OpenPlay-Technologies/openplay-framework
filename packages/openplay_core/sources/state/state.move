@@ -466,7 +466,7 @@ fun process_transactions_for_account(
     balance_manager_id: ID,
     transactions: &vector<Transaction>,
 ) {
-    transactions.do_ref!<Transaction>(|tx| {
+    transactions.do_ref!<Transaction, ()>(|tx| {
         if (tx.is_credit()) {
             self.accounts[balance_manager_id].credit(tx.amount())
         } else if (tx.is_debit()) {
@@ -480,7 +480,7 @@ fun process_transactions_for_account(
 
 /// Processes the transactions for the history by updating the statistics.
 fun process_volumes(self: &mut State, transactions: &vector<Transaction>) {
-    transactions.do_ref!<Transaction>(|tx| {
+    transactions.do_ref!<Transaction, ()>(|tx| {
         let amount = tx.amount();
         if (tx.is_credit()) {
             self.process_win(amount);

@@ -4,7 +4,7 @@ use std::string::{String, utf8};
 
 // === Constant ===
 const PRECISION_ERROR_ALLOWANCE: u64 = 2;
-const CURRENT_VERSION: u64 = 1;
+const CURRENT_VERSION: u64 = 2;
 
 // === Public-View Functions ===
 public fun precision_error_allowance(): u64 {
