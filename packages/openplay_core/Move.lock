@@ -2,39 +2,67 @@
 
 [move]
 version = 3
-manifest_digest = "8CA27F0046B76863E09AF3E8656DC349DDC54A2DCCF9AF6F548B060D68A85B93"
-deps_digest = "F8BBB0CCB2491CA29A3DF03D6F92277A4F3574266507ACD77214D37ECA3F3082"
+manifest_digest = "9F78402E2F6A44B51A6B9C9201BEB0018FA428C40D788480AA64CF021BC1E5F5"
+deps_digest = "F9B494B64F0615AED0E98FC12A85B85ECD2BC5185C22D30E7F67786BB52E507C"
 dependencies = [
+  { id = "Bridge", name = "Bridge" },
+  { id = "MoveStdlib", name = "MoveStdlib" },
   { id = "Sui", name = "Sui" },
+  { id = "SuiSystem", name = "SuiSystem" },
+]
+
+[[move.package]]
+id = "Bridge"
+source = { git = "https://github.com/MystenLabs/sui.git", rev = "04f11afaf5e0", subdir = "crates/sui-framework/packages/bridge" }
+
+dependencies = [
+  { id = "MoveStdlib", name = "MoveStdlib" },
+  { id = "Sui", name = "Sui" },
+  { id = "SuiSystem", name = "SuiSystem" },
 ]
 
 [[move.package]]
 id = "MoveStdlib"
-source = { git = "https://github.com/MystenLabs/sui.git", rev = "framework/testnet", subdir = "crates/sui-framework/packages/move-stdlib" }
+source = { git = "https://github.com/MystenLabs/sui.git", rev = "04f11afaf5e0", subdir = "crates/sui-framework/packages/move-stdlib" }
 
 [[move.package]]
 id = "Sui"
-source = { git = "https://github.com/MystenLabs/sui.git", rev = "framework/testnet", subdir = "crates/sui-framework/packages/sui-framework" }
+source = { git = "https://github.com/MystenLabs/sui.git", rev = "04f11afaf5e0", subdir = "crates/sui-framework/packages/sui-framework" }
 
 dependencies = [
   { id = "MoveStdlib", name = "MoveStdlib" },
 ]
 
+[[move.package]]
+id = "SuiSystem"
+source = { git = "https://github.com/MystenLabs/sui.git", rev = "04f11afaf5e0", subdir = "crates/sui-framework/packages/sui-system" }
+
+dependencies = [
+  { id = "MoveStdlib", name = "MoveStdlib" },
+  { id = "Sui", name = "Sui" },
+]
+
 [move.toolchain-version]
-compiler-version = "1.44.2"
+compiler-version = "1.46.2"
 edition = "2024.beta"
 flavor = "sui"
 
 [env]
 
 [env.localnet]
-chain-id = "a312e820"
-original-published-id = "0xfd9009f531079166f1c70687d3be3943cd4e26265cbdafc5e469bf07e0d6cda7"
-latest-published-id = "0xfd9009f531079166f1c70687d3be3943cd4e26265cbdafc5e469bf07e0d6cda7"
+chain-id = "823418a8"
+original-published-id = "0x684fd67808e84877f76526ddc0df26caee1b03786b6031bfbe0c1625e3faa865"
+latest-published-id = "0x684fd67808e84877f76526ddc0df26caee1b03786b6031bfbe0c1625e3faa865"
 published-version = "1"
 
 [env.testnet]
 chain-id = "4c78adac"
 original-published-id = "0x4653705e1b2a974bfb41904435819665028f7bbcb53f467ec74bf4efca4fae5c"
 latest-published-id = "0x4653705e1b2a974bfb41904435819665028f7bbcb53f467ec74bf4efca4fae5c"
+published-version = "1"
+
+[env.mainnet]
+chain-id = "35834a8a"
+original-published-id = "0x9f9780f22ab5d902de3d555b0dc2fddc79f85896d1407a13e92122ce50ecf8ce"
+latest-published-id = "0x9f9780f22ab5d902de3d555b0dc2fddc79f85896d1407a13e92122ce50ecf8ce"
 published-version = "1"
